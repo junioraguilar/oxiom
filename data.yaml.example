@@ -1,0 +1,15 @@
+# Exemplo de arquivo data.yaml para o conjunto de dados YOLO
+
+# Caminho para o dataset (use . para o diretório atual)
+path: .
+
+# Caminhos relativos para subdiretórios de imagens
+train: images/train  # imagens de treinamento
+val: images/val      # imagens de validação
+test: images/test    # imagens de teste (opcional)
+
+# Informações sobre as classes
+nc: 2  # número de classes
+
+# Nomes das classes, em ordem
+names: ['pessoa', 'carro']  # substitua pelos nomes das suas classes 

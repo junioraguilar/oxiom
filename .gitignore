@@ -1,0 +1,39 @@
+# Ignorar diretórios de dados de treinamento
+train_data/
+train_data/*
+
+# Ignorar diretório de modelos
+models/
+models/*
+*.pt
+
+# Ignorar diretório de uploads
+uploads/
+uploads/*
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+package-lock.json
+yarn.lock
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de ambiente e configuração
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Logs
+*.log
+
+# Arquivos temporários
+*.tmp 
