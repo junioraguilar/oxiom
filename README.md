@@ -1,4 +1,11 @@
-# YOLOv8 Trainer Web Interface
+<p align="center">
+  <img src="frontend/logo.png" alt="Oxiom Logo" width="180" />
+</p>
+
+<h1 align="center">Oxiom</h1>
+<p align="center"><b>Train, test, and upload models for object detection with an easy-to-use interface</b></p>
+
+---
 
 This project provides a web interface for training, uploading, and testing YOLOv8 models.
 
