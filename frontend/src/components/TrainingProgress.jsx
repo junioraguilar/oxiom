@@ -25,6 +25,7 @@ import {
 import { io } from '../../node_modules/socket.io-client/dist/socket.io.esm.min.js';
 import { WarningIcon } from '@chakra-ui/icons';
 import axios from 'axios';
+import MetricsPanel from './MetricsPanel';
 
 const TrainingProgress = ({ modelId }) => {
   const [trainingInfo, setTrainingInfo] = useState({
@@ -38,6 +39,7 @@ const TrainingProgress = ({ modelId }) => {
   const [connected, setConnected] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const [stoppingTraining, setStoppingTraining] = useState(false);
+  const [metricsHistory, setMetricsHistory] = useState({});
   const toast = useToast();
 
   useEffect(() => {
@@ -86,6 +88,23 @@ const TrainingProgress = ({ modelId }) => {
         
         console.log("Metrics received:", info.metrics);
         setTrainingInfo(info);
+
+        // Atualiza histórico das métricas
+        if (info.metrics && info.current_epoch) {
+          setMetricsHistory(prev => {
+            const updated = { ...prev };
+            Object.entries(info.metrics).forEach(([key, value]) => {
+              if (!updated[key]) updated[key] = [];
+              // Evita duplicatas para a mesma epoch
+              if (!updated[key].some(item => item.epoch === info.current_epoch)) {
+                updated[key] = [...updated[key], { epoch: info.current_epoch, value: value }];
+                // Mantém só os últimos 30 valores
+                if (updated[key].length > 30) updated[key] = updated[key].slice(-30);
+              }
+            });
+            return updated;
+          });
+        }
       }
     });
 
@@ -122,7 +141,8 @@ const TrainingProgress = ({ modelId }) => {
       );
     }
 
-    const metricsArray = Object.entries(trainingInfo.metrics);
+    // Remove epoch_percent das métricas exibidas
+    const metricsArray = Object.entries(trainingInfo.metrics).filter(([key]) => key !== 'epoch_percent');
     
     return (
       <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
@@ -205,6 +225,7 @@ const TrainingProgress = ({ modelId }) => {
         </HStack>
       </CardHeader>
       <CardBody>
+        <MetricsPanel metricsHistory={metricsHistory} currentMetrics={trainingInfo.metrics} />
         <VStack spacing={4} align="stretch">
           {connectionError && (
             <Alert status="error">
@@ -223,7 +244,6 @@ const TrainingProgress = ({ modelId }) => {
           <Box>
             <HStack justify="space-between">
               <Text fontWeight="bold">Progress</Text>
-              <Text>{Math.round(trainingInfo.progress * 100)}%</Text>
             </HStack>
             <Progress 
               value={trainingInfo.progress * 100} 

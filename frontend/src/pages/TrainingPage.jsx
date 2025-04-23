@@ -26,6 +26,29 @@ const TrainingPage = () => {
   const [trainingSessions, setTrainingSessions] = useState([]);
 
   useEffect(() => {
+    // Se houver um treinamento em andamento, redireciona para o monitor
+    const checkAndRedirect = async () => {
+      try {
+        const response = await axios.get('http://localhost:5000/api/training-status');
+        if (response.data.training_sessions && response.data.training_sessions.length > 0) {
+          const activeSession = response.data.training_sessions.find(
+            session => session.info.status === 'training' || 
+                       session.info.status === 'starting' || 
+                       session.info.status === 'running'
+          );
+          if (activeSession) {
+            window.location.href = `/monitor/${activeSession.model_id}`;
+            return;
+          }
+        }
+      } catch (err) {
+        // Ignora erros silenciosamente
+      }
+    };
+    checkAndRedirect();
+  }, []);
+
+  useEffect(() => {
     // Fetch available datasets when component mounts
     const fetchDatasets = async () => {
       try {

@@ -15,6 +15,7 @@ from ultralytics import YOLO
 from models import db, YoloModel, Dataset
 import models
 import shutil
+import psutil
 
 app = Flask(__name__)
 CORS(app)
@@ -45,6 +46,12 @@ db.init_app(app)
 # Create tables if they don't exist
 with app.app_context():
     db.create_all()
+    # Corrigir status de modelos "em andamento" após restart
+    models_in_progress = YoloModel.query.filter(YoloModel.status.in_(['training', 'starting', 'running'])).all()
+    for model in models_in_progress:
+        model.status = 'error'  # ou 'stopped' se preferir
+        model.error_message = 'Treinamento interrompido por reinicialização do backend.'
+        db.session.commit()
 
 # Dicionário para armazenar o status dos treinamentos
 training_status = {}
@@ -93,6 +100,29 @@ class TrainingCallback:
             except Exception as e:
                 print(f"Error extracting metrics: {str(e)}")
                 print(f"Trainer metrics: {trainer.metrics}")
+        
+        # Adiciona GPU_mem (em GB)
+        gpu_mem = 0.0
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            gpu_mem = meminfo.used / (1024 ** 3)  # em GB
+            pynvml.nvmlShutdown()
+        except Exception as e:
+            # Fallback para torch se pynvml não estiver disponível
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    gpu_mem = torch.cuda.memory_reserved() / (1024 ** 3)
+            except Exception:
+                gpu_mem = 0.0
+        metrics['GPU_mem'] = round(gpu_mem, 3)
+        
+        # Porcentagem da epoch em tempo real
+        # Se trainer tiver batches, pode-se adicionar aqui (simulado como 100% ao final da epoch)
+        metrics['epoch_percent'] = 100.0
         
         self.metrics = metrics
         
@@ -215,30 +245,61 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
         # Create a thread to monitor training progress
         def monitor_training_progress():
             current_epoch = 0
+            last_epoch_batches = 0
             while current_epoch < epochs:
                 try:
-                    # Sleep for a few seconds to avoid excessive polling
-                    time.sleep(5)
-                    # Check if training is still running
+                    # Sleep for 0.1 segundos para atualização em tempo real
+                    time.sleep(0.1)
                     if not hasattr(model, 'trainer'):
                         print("Model has no trainer attribute yet, waiting...")
                         continue
-                        
                     try:
-                        # Get current epoch from model if available
-                        if hasattr(model.trainer, 'epoch'):
+                        # Obtem progresso dentro da epoch
+                        if hasattr(model.trainer, 'epoch') and hasattr(model.trainer, 'dataloader'):
                             new_epoch = model.trainer.epoch + 1
+                            dataloader = getattr(model.trainer, 'dataloader', None)
+                            total_batches = len(dataloader) if dataloader is not None else 0
+                            # Tenta diferentes atributos para batch atual
+                            batch_idx = None
+                            for attr in ['batch_i', 'batch', 'iter', 'iteration', 'batch_idx']:
+                                if hasattr(model.trainer, attr):
+                                    batch_idx = getattr(model.trainer, attr)
+                                    break
+                            if batch_idx is None:
+                                batch_idx = 0
+                            epoch_percent = float(batch_idx + 1) / float(total_batches) * 100 if total_batches else 0.0
+                            print(f"[DEBUG] Epoch: {new_epoch}, Batch: {batch_idx}/{total_batches}, Percent: {epoch_percent:.1f}")
+                            # Atualiza epoch_percent em tempo real
+                            info = training_status.get(model_id, {}).copy()
+                            if 'metrics' not in info:
+                                info['metrics'] = {}
+                            info['metrics']['epoch_percent'] = round(epoch_percent, 1)
+                            # Atualiza GPU_mem em tempo real
+                            gpu_mem = 0.0
+                            try:
+                                import pynvml
+                                pynvml.nvmlInit()
+                                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                                gpu_mem = meminfo.used / (1024 ** 3)  # em GB
+                                pynvml.nvmlShutdown()
+                            except Exception as e:
+                                # Fallback para torch se pynvml não estiver disponível
+                                try:
+                                    import torch
+                                    if torch.cuda.is_available():
+                                        gpu_mem = torch.cuda.memory_reserved() / (1024 ** 3)
+                                except Exception:
+                                    gpu_mem = 0.0
+                            info['metrics']['GPU_mem'] = round(gpu_mem, 3)
+                            update_training_info(model_id, info)
                             if new_epoch > current_epoch:
                                 current_epoch = new_epoch
                                 print(f"Detected epoch progress: {current_epoch}/{epochs}")
-                                
-                                # Call our callback manually
                                 callback.current_epoch = current_epoch
                                 callback.on_train_epoch_end(model.trainer)
                     except Exception as e:
                         print(f"Error monitoring epoch progress: {str(e)}")
-                        
-                    # Check if training is complete
                     if current_epoch >= epochs:
                         print("Training appears to be complete based on epoch count")
                         callback.status = "completed"
@@ -246,8 +307,7 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
                         break
                 except Exception as e:
                     print(f"Error in training monitor thread: {str(e)}")
-                    # Don't break the loop, try again
-
+        
         # Start the monitor as a separate thread
         monitor_thread = None
         try:
@@ -641,24 +701,18 @@ def list_models():
 
 @app.route('/api/training-status', methods=['GET'])
 def get_training_status():
-    """Retorna o status de todos os treinamentos em andamento"""
+    """Retorna o status de todos os treinamentos em andamento no formato esperado pelo frontend"""
     try:
-        # Verificar se foi solicitado um modelo específico
         model_id = request.args.get('model_id')
-        
         if model_id:
-            # Consultar o banco de dados para o modelo específico
+            # Consulta individual (mantém compatibilidade)
             with app.app_context():
                 model = YoloModel.query.get(model_id)
                 if not model:
                     return jsonify({'error': 'Model not found'}), 404
-                
-                # Verificar também se existe no dicionário de status para dados mais recentes
                 current_info = training_status.get(model_id)
                 if current_info:
-                    # Mesclar as informações do dicionário com o banco de dados
-                    response = {
-                        'model_id': model_id,
+                    info = {
                         'status': current_info.get('status', model.status),
                         'progress': current_info.get('progress', model.progress) * 100,
                         'current_epoch': current_info.get('current_epoch', model.current_epoch),
@@ -667,24 +721,19 @@ def get_training_status():
                         'error_message': current_info.get('error_message', model.error_message)
                     }
                 else:
-                    # Usar apenas os dados do banco
-                    response = model.to_dict()
-                
-                return jsonify(response), 200
+                    info = model.to_dict()
+                return jsonify({'training_sessions': [{ 'model_id': model_id, 'info': info }]})
         else:
-            # Consultar o banco de dados para todos os modelos em treinamento
+            # Consulta todos os modelos em andamento
             with app.app_context():
                 training_models = YoloModel.query.filter(
-                    YoloModel.status.in_(['training', 'starting'])
+                    YoloModel.status.in_(['training', 'starting', 'running'])
                 ).all()
-                
-                result = {}
+                sessions = []
                 for model in training_models:
-                    # Verificar também se existe no dicionário de status
                     current_info = training_status.get(model.id)
                     if current_info:
-                        # Mesclar as informações
-                        result[model.id] = {
+                        info = {
                             'status': current_info.get('status', model.status),
                             'progress': current_info.get('progress', model.progress) * 100,
                             'current_epoch': current_info.get('current_epoch', model.current_epoch),
@@ -693,11 +742,9 @@ def get_training_status():
                             'error_message': current_info.get('error_message', model.error_message)
                         }
                     else:
-                        # Usar apenas os dados do banco
-                        result[model.id] = model.to_dict()
-                
-                return jsonify(result), 200
-    
+                        info = model.to_dict()
+                    sessions.append({'model_id': model.id, 'info': info})
+                return jsonify({'training_sessions': sessions})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -889,6 +936,17 @@ def train_model():
             )
             db.session.add(training_model)
             db.session.commit()
+        
+        # Notificar imediatamente o frontend sobre o novo treinamento
+        update_training_info(model_id, {
+            'status': 'starting',
+            'current_epoch': 0,
+            'total_epochs': epochs,
+            'progress': 0,
+            'metrics': {},
+            'device': device,
+            'yaml_path': data_yaml_path
+        })
         
         # Iniciar treinamento em uma thread separada
         training_thread = threading.Thread(
