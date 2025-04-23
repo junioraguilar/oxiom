@@ -1,117 +1,109 @@
 # YOLOv8 Trainer Web Interface
 
-Este projeto fornece uma interface web para treinamento, upload e teste de modelos YOLOv8.
+This project provides a web interface for training, uploading, and testing YOLOv8 models.
 
 ## Features
 
-- Upload e treinamento de modelos YOLOv8 customizados
-- Upload de modelos YOLOv8 pré-treinados
-- Teste de detecção de objetos através do upload de imagens
-- Visualização de resultados de detecção com caixas delimitadoras e pontuações de confiança
+- Upload and train custom YOLOv8 models
+- Upload pre-trained YOLOv8 models
+- Object detection testing via image upload
+- Visualization of detection results with bounding boxes and confidence scores
 
-## Estrutura do Projeto
+## Project Structure
 
 ```
-├── backend/            # API Flask backend
-│   ├── app.py          # Aplicação Flask principal  
-│   └── requirements.txt # Dependências Python
-├── frontend/           # Frontend React
-│   ├── public/         # Assets estáticos
-│   └── src/            # Código fonte React
-├── models/             # Modelos armazenados (ignorados pelo Git)
-├── uploads/            # Imagens enviadas (ignoradas pelo Git)
-└── train_data/         # Datasets de treinamento (ignorados pelo Git)
+├── backend/            # Flask API backend
+│   ├── app.py          # Main Flask application  
+│   └── requirements.txt # Python dependencies
+├── frontend/           # React frontend
+│   ├── public/         # Static assets
+│   └── src/            # React source code
+├── models/             # Stored models (gitignored)
+├── uploads/            # Uploaded images (gitignored)
+└── train_data/         # Training datasets (gitignored)
 ```
 
-## Controle de Versão
+## Version Control
 
-Este projeto utiliza Git para controle de versão, com as seguintes configurações:
+This project uses Git for version control, with the following settings:
 
-- Arquivos ignorados pelo Git (configurados no `.gitignore`):
-  - Diretório `models/` (contém arquivos de modelo pesados)
-  - Diretório `train_data/` (contém datasets de treinamento)
-  - Diretório `uploads/` (contém imagens enviadas pelos usuários)
-  - Arquivos com extensão `.pt` (arquivos de modelo PyTorch)
-  - Diretório `node_modules/` (dependências do Node.js)
-  - Arquivos temporários e de cache
+- Files ignored by Git (set in `.gitignore`):
+  - `models/` directory (large model files)
+  - `train_data/` directory (training datasets)
+  - `uploads/` directory (user-uploaded images)
+  - `.pt` files (PyTorch model files)
+  - `node_modules/` directory (Node.js dependencies)
+  - Temporary and cache files
 
-## Instruções de Configuração
+## How to Run (Development)
 
-### Pré-requisitos
+### Prerequisites
 
-- Python 3.8+ 
-- Node.js 16+ 
-- npm ou yarn
+- [Anaconda/Miniconda](https://docs.conda.io/en/latest/miniconda.html) installed
+- Node.js 18+ and npm
+- Docker and Docker Compose (optional for containerized setup)
+- NVIDIA GPU + drivers + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for GPU support
 
-### Configuração do Backend (Flask)
+### Backend (Flask + YOLOv8) with Conda
 
-1. Abra um terminal e navegue até o diretório backend:
+1. Create the Conda environment from the `environment.yml` file in the project root:
+
+```
+conda env create -f environment.yml
+conda activate yolov8-backend
+```
+
+2. Install PyTorch with CUDA (GPU) support manually (recommended):
+
+```
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+```
+
+3. Install the remaining dependencies:
+
+```
+pip install -r backend/requirements.txt
+```
+
+4. Start the Flask API:
 
 ```
 cd backend
-```
-
-2. Crie um ambiente virtual (recomendado):
-
-```
-python -m venv venv
-venv\Scripts\activate  # Windows
-```
-
-3. Instale as dependências necessárias:
-
-```
-pip install -r requirements.txt
-```
-
-4. Inicie o servidor Flask:
-
-```
 python app.py
 ```
 
-O servidor backend será iniciado em http://localhost:5000
+### Frontend (React)
 
-### Configuração do Frontend (React)
-
-1. Abra um novo terminal e navegue até o diretório frontend:
+1. Install dependencies:
 
 ```
 cd frontend
-```
-
-2. Instale as dependências:
-
-```
 npm install
 ```
 
-3. Inicie o servidor de desenvolvimento:
+2. Start the frontend in development mode:
 
 ```
 npm run dev
 ```
 
-O servidor de desenvolvimento frontend será iniciado em http://localhost:3000
+The frontend will be available at http://localhost:5173
 
-## Uso
+### Docker Environment (optional)
 
-1. Abra seu navegador e acesse http://localhost:3000
-2. Use o menu de navegação para acessar diferentes recursos:
-   - **Treinar Modelo**: Faça upload de um dataset e treine um modelo YOLOv8 personalizado
-   - **Testar Modelo**: Selecione um modelo e faça upload de imagens para detecção de objetos
-   - **Upload de Modelo**: Faça upload de arquivos de modelo YOLOv8 pré-treinados (.pt)
+You can run the entire project using Docker Compose (with GPU support):
 
-## Formato dos Dados de Treinamento
+```
+docker compose up --build
+```
 
-Os dados de treinamento devem estar no formato YOLO, tipicamente um arquivo ZIP contendo:
+This will start the backend (Flask + YOLOv8 + Conda) and frontend (React) in isolated containers. The backend will use GPU if available.
 
-- Diretório `images/` com imagens de treinamento
-- Diretório `labels/` com arquivos de rótulos correspondentes
-- Arquivo de configuração `data.yaml` definindo as classes
+## Notes
+- You do not need to use `.bat` scripts to activate environments.
+- For production, adjust environment variables and settings as needed.
+- Make sure your GPU and drivers are properly set up for CUDA usage.
 
-## Notas
+## Contact
 
-- O treinamento real de modelos é intensivo em recursos e pode exigir uma GPU.
-- Para uso em produção, considere implementar processamento de tarefas em segundo plano para tarefas de treinamento.
-- Arquivos de modelo grandes podem exigir ajustes nos limites de tamanho de arquivo do servidor. 
+Questions or suggestions? Open an issue in the repository!

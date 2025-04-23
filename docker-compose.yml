@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  backend:
+    build: .
+    container_name: yolo-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app/backend
+      - ./models:/app/backend/../models
+      - ./uploads:/app/backend/../uploads
+      - ./train_data:/app/backend/../train_data
+    environment:
+      - FLASK_ENV=development
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    runtime: nvidia
+    restart: unless-stopped
+    tty: true
+  frontend:
+    image: node:20-slim
+    working_dir: /app/frontend
+    volumes:
+      - ./frontend:/app/frontend
+    command: sh -c "npm install --legacy-peer-deps --no-audit --progress=false && npm run dev"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    tty: true

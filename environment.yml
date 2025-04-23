@@ -1,0 +1,13 @@
+name: yolov8-backend
+channels:
+  - defaults
+  - conda-forge
+  - nvidia
+
+dependencies:
+  - python=3.10
+  - pip
+  - cudatoolkit=11.8
+  - cudnn
+  - pip:
+      - -r requirements.txt
