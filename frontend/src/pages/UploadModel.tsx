@@ -15,7 +15,7 @@ import {
   AlertTitle,
   AlertDescription
 } from '@chakra-ui/react'
-import axios from 'axios'
+import api from '../api/axios'
 
 const UploadModel = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -23,12 +23,18 @@ const UploadModel = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadSuccess, setUploadSuccess] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [modelName, setModelName] = useState('')
   
   const toast = useToast()
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setSelectedFile(e.target.files[0])
+      const file = e.target.files[0]
+      setSelectedFile(file)
+      // Set default model name from file name (without extension)
+      const fileName = file.name
+      const modelNameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName
+      setModelName(modelNameWithoutExt)
       setUploadSuccess(false)
       setUploadError('')
     }
@@ -49,6 +55,7 @@ const UploadModel = () => {
     // Create form data
     const formData = new FormData()
     formData.append('file', selectedFile)
+    formData.append('name', modelName || 'Unnamed model')
 
     setIsUploading(true)
     setUploadProgress(0)
@@ -57,7 +64,7 @@ const UploadModel = () => {
 
     try {
       // Upload model with progress tracking
-      const response = await axios.post('/api/upload-model', formData, {
+      const response = await api.post('/api/upload-model', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -77,12 +84,12 @@ const UploadModel = () => {
         duration: 5000,
         isClosable: true,
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload failed:', error)
       
       let errorMsg = 'Failed to upload model'
-      if (axios.isAxiosError(error) && error.response) {
-        errorMsg = error.response.data.error || errorMsg
+      if (error.response) {
+        errorMsg = error.response.data?.error || errorMsg
       }
       
       setUploadError(errorMsg)
@@ -123,9 +130,21 @@ const UploadModel = () => {
             </FormControl>
             
             {selectedFile && (
-              <Text fontSize="sm">
-                Selected file: <strong>{selectedFile.name}</strong> ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
-              </Text>
+              <>
+                <FormControl>
+                  <FormLabel htmlFor="model-name">Model Name</FormLabel>
+                  <Input
+                    id="model-name"
+                    type="text"
+                    value={modelName}
+                    onChange={(e) => setModelName(e.target.value)}
+                    placeholder="Enter a name for your model"
+                  />
+                </FormControl>
+                <Text fontSize="sm">
+                  Selected file: <strong>{selectedFile.name}</strong> ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
+                </Text>
+              </>
             )}
             
             {isUploading && (
@@ -167,4 +186,4 @@ const UploadModel = () => {
   )
 }
 
-export default UploadModel 
+export default UploadModel

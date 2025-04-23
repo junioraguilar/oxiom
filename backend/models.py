@@ -75,3 +75,40 @@ class YoloModel(db.Model):
             'classes': self.classes,
             'error_message': self.error_message
         } 
+
+class Dataset(db.Model):
+    """Modelo de dados para armazenar informações sobre datasets enviados"""
+    
+    __tablename__ = 'datasets'
+    
+    id = db.Column(db.String(36), primary_key=True)  # UUID
+    name = db.Column(db.String(100), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)  # Caminho relativo no sistema de arquivos
+    yaml_path = db.Column(db.String(255), nullable=True)  # Caminho para o arquivo data.yaml
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    file_size = db.Column(db.Integer, default=0)  # Tamanho em bytes
+    
+    # Informações extraídas do YAML
+    _classes = db.Column(db.Text, nullable=True)
+    
+    @property
+    def classes(self):
+        if self._classes:
+            return json.loads(self._classes)
+        return []
+    
+    @classes.setter
+    def classes(self, value):
+        self._classes = json.dumps(value) if value else None
+    
+    def to_dict(self):
+        """Converte o dataset para um dicionário para serialização em JSON"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'file_path': self.file_path,
+            'yaml_path': self.yaml_path,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'file_size': self.file_size,
+            'classes': self.classes
+        } 

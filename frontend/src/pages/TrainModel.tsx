@@ -20,10 +20,24 @@ import {
   AlertDescription,
   Progress,
   Divider,
-  useToast
+  useToast,
+  Select,
+  Flex,
+  HStack
 } from '@chakra-ui/react'
-import axios from 'axios'
+import api from '../api/axios'
 import TrainingProgress from '../components/TrainingProgress'
+
+// Interface for dataset object
+interface Dataset {
+  id: string;
+  name: string;
+  file_path: string;
+  yaml_path: string;
+  created_at: string;
+  file_size: number;
+  classes: string[];
+}
 
 const TrainModel = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -38,6 +52,9 @@ const TrainModel = () => {
   const [batchSize, setBatchSize] = useState(16)
   const [imageSize, setImageSize] = useState(640)
   const [error, setError] = useState('')
+  const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [selectedDatasetId, setSelectedDatasetId] = useState('')
+  const [loadingDatasets, setLoadingDatasets] = useState(false)
   
   const toast = useToast()
 
@@ -45,7 +62,7 @@ const TrainModel = () => {
   useEffect(() => {
     const checkOngoingTraining = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/training-status')
+        const response = await api.get('/api/training-status')
         
         // Check if there are any active training sessions
         if (response.data.training_sessions && response.data.training_sessions.length > 0) {
@@ -75,8 +92,29 @@ const TrainModel = () => {
       }
     }
     
+    fetchDatasets()
     checkOngoingTraining()
   }, [toast])
+
+  // Fetch datasets from the API
+  const fetchDatasets = async () => {
+    setLoadingDatasets(true)
+    try {
+      const response = await api.get('/api/datasets')
+      setDatasets(response.data.datasets)
+    } catch (error) {
+      console.error('Error fetching datasets:', error)
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível carregar os datasets',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      })
+    } finally {
+      setLoadingDatasets(false)
+    }
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -113,6 +151,7 @@ const TrainModel = () => {
       setTrainingSuccess(false);
       setModelId('');
       setError('');
+      setSelectedDatasetId('');
     }
   }
 
@@ -136,7 +175,7 @@ const TrainModel = () => {
     setError('')
 
     try {
-      const response = await axios.post('/api/upload-dataset', formData, {
+      const response = await api.post('/api/upload-dataset', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -146,8 +185,6 @@ const TrainModel = () => {
           )
           setUploadProgress(percentCompleted)
         },
-        // Aumentando timeout para arquivos grandes
-        timeout: 600000, // 10 minutos
       })
 
       setUploadSuccess(true)
@@ -160,20 +197,17 @@ const TrainModel = () => {
         duration: 5000,
         isClosable: true,
       })
-    } catch (error) {
+      
+      // Refresh datasets list after upload
+      fetchDatasets()
+    } catch (error: any) {
       console.error('Upload falhou:', error)
       
       let errorMsg = 'Falha ao enviar dataset'
-      if (axios.isAxiosError(error)) {
         if (error.code === 'ECONNABORTED') {
-          errorMsg = 'O upload expirou. O arquivo pode ser muito grande.';
+        errorMsg = 'O upload expirou. O arquivo pode ser muito grande.'
         } else if (error.response) {
-          if (error.response.status === 413) {
-            errorMsg = 'Arquivo muito grande. O tamanho máximo permitido é 900MB.';
-          } else {
-            errorMsg = error.response.data.error || errorMsg;
-          }
-        }
+        errorMsg = error.response.data?.error || errorMsg
       }
       
       setError(errorMsg)
@@ -186,6 +220,19 @@ const TrainModel = () => {
       })
     } finally {
       setIsUploading(false)
+    }
+  }
+
+  const handleDatasetSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value
+    setSelectedDatasetId(id)
+    if (id) {
+      setDatasetId(id)
+      setUploadSuccess(true)
+      setError('')
+    } else {
+      setDatasetId('')
+      setUploadSuccess(false)
     }
   }
 
@@ -203,11 +250,9 @@ const TrainModel = () => {
 
     setIsTraining(true)
     setError('')
-    setTrainingSuccess(false)
-    setModelId('')
 
     try {
-      const response = await axios.post('/api/train', {
+      const response = await api.post('/api/train', {
         dataset_id: datasetId,
         epochs: epochs,
         batch_size: batchSize,
@@ -216,23 +261,17 @@ const TrainModel = () => {
 
       setTrainingSuccess(true)
       setModelId(response.data.model_id)
+    } catch (error: any) {
+      console.error('Training failed:', error)
       
-      toast({
-        title: 'Training started',
-        description: 'Model training has been initiated successfully',
-        status: 'success',
-        duration: 5000,
-        isClosable: true,
-      })
-    } catch (error) {
-      console.error('Training request failed:', error)
-      
-      let errorMsg = 'Failed to start model training'
-      if (axios.isAxiosError(error) && error.response) {
-        errorMsg = error.response.data.error || errorMsg
+      let errorMsg = 'Error starting training'
+      if (error.response) {
+        errorMsg = error.response.data?.error || errorMsg
       }
       
       setError(errorMsg)
+      setIsTraining(false)
+      
       toast({
         title: 'Training failed',
         description: errorMsg,
@@ -240,88 +279,95 @@ const TrainModel = () => {
         duration: 5000,
         isClosable: true,
       })
-    } finally {
-      setIsTraining(false)
     }
   }
 
+  if (trainingSuccess && modelId) {
+    return (
+      <Box p={6}>
+        <Heading size="lg" mb={6}>Training Progress</Heading>
+        <TrainingProgress modelId={modelId} onCompleted={() => setIsTraining(false)} />
+      </Box>
+    )
+  }
+
   return (
-    <Box py={8}>
-      <VStack spacing={8} align="stretch">
-        <Heading as="h1" size="xl">
-          Train Your YOLO Model
-        </Heading>
+    <Box p={6}>
+      <Heading size="lg" mb={6}>Train YOLOv8 Model</Heading>
+      
+      <VStack spacing={6} align="stretch">
+        <Box p={5} borderWidth="1px" borderRadius="lg">
+          <Heading size="md" mb={4}>Select Dataset</Heading>
         
-        <Text>
-          Upload your dataset and configure training parameters to train a custom YOLOv8 model.
-        </Text>
-        
-        <Box p={6} borderWidth="1px" borderRadius="lg" boxShadow="sm">
-          <VStack spacing={6} align="stretch">
-            <Heading size="md">Step 1: Upload Dataset</Heading>
+          <FormControl mb={4}>
+            <FormLabel>Available Datasets</FormLabel>
+            <Select 
+              placeholder="Select a dataset" 
+              value={selectedDatasetId}
+              onChange={handleDatasetSelect}
+              isDisabled={loadingDatasets}
+            >
+              {datasets.map(dataset => (
+                <option key={dataset.id} value={dataset.id}>
+                  {dataset.name} ({dataset.classes.join(', ')})
+                </option>
+              ))}
+            </Select>
+            <FormHelperText>
+              Select a dataset you previously uploaded or upload a new one
+            </FormHelperText>
+          </FormControl>
+          
+          <Text fontWeight="medium" mb={2}>Or upload a new dataset:</Text>
             
             <FormControl>
-              <FormLabel htmlFor="dataset-file">Select Dataset File (ZIP)</FormLabel>
+            <FormLabel>Dataset (ZIP file)</FormLabel>
               <Input
-                id="dataset-file"
                 type="file"
                 accept=".zip"
                 onChange={handleFileChange}
-                padding={1}
+              disabled={isUploading}
+              p={1}
               />
               <FormHelperText>
-                O dataset deve estar no formato YOLO, contendo:
-                <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
-                  <li>Arquivo <strong>data.yaml</strong> com configuração de classes</li>
-                  <li>Pasta <strong>images/</strong> com as imagens de treinamento</li>
-                  <li>Pasta <strong>labels/</strong> com as anotações no formato YOLO</li>
-                </ul>
+              Upload a ZIP file containing your YOLO dataset
               </FormHelperText>
             </FormControl>
             
-            {selectedFile && (
-              <Text fontSize="sm">
-                Selected file: <strong>{selectedFile.name}</strong> ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
-              </Text>
-            )}
-            
             {isUploading && (
-              <Box>
-                <Text mb={2}>Uploading... {uploadProgress}%</Text>
-                <Progress value={uploadProgress} size="sm" colorScheme="blue" borderRadius="md" />
+            <Box mt={4}>
+              <Progress value={uploadProgress} size="sm" colorScheme="blue" />
+              <FormControl>
+                <FormHelperText textAlign="center">{uploadProgress}% completed</FormHelperText>
+              </FormControl>
               </Box>
             )}
             
-            {uploadSuccess && (
-              <Alert status="success" borderRadius="md">
-                <AlertIcon />
-                <AlertTitle>Upload Successful!</AlertTitle>
-                <AlertDescription>Dataset has been uploaded and is ready for training.</AlertDescription>
-              </Alert>
-            )}
-            
+          <Flex justifyContent="flex-end" mt={4}>
             <Button 
               colorScheme="blue" 
               onClick={handleUploadDataset} 
               isLoading={isUploading} 
-              loadingText="Uploading" 
-              isDisabled={!selectedFile || isUploading}
+              loadingText="Uploading..."
+              disabled={!selectedFile || isUploading || !!selectedDatasetId}
             >
               Upload Dataset
             </Button>
+          </Flex>
+        </Box>
             
-            <Divider />
+        {uploadSuccess && (
+          <Box p={5} borderWidth="1px" borderRadius="lg">
+            <Heading size="md" mb={4}>Training Parameters</Heading>
             
-            <Heading size="md">Step 2: Configure Training</Heading>
-            
+            <HStack spacing={4} align="flex-start" mb={4}>
             <FormControl>
-              <FormLabel>Number of Epochs</FormLabel>
+                <FormLabel>Epochs</FormLabel>
               <NumberInput 
-                min={1} 
-                max={300} 
                 value={epochs} 
                 onChange={(_, value) => setEpochs(value)}
-                isDisabled={!uploadSuccess}
+                  min={1} 
+                  max={500}
               >
                 <NumberInputField />
                 <NumberInputStepper>
@@ -330,18 +376,17 @@ const TrainModel = () => {
                 </NumberInputStepper>
               </NumberInput>
               <FormHelperText>
-                Higher values may improve accuracy but take longer to train
+                  Number of training epochs
               </FormHelperText>
             </FormControl>
             
             <FormControl>
               <FormLabel>Batch Size</FormLabel>
               <NumberInput 
-                min={1} 
-                max={128} 
                 value={batchSize} 
                 onChange={(_, value) => setBatchSize(value)}
-                isDisabled={!uploadSuccess}
+                  min={1} 
+                  max={64}
               >
                 <NumberInputField />
                 <NumberInputStepper>
@@ -350,19 +395,18 @@ const TrainModel = () => {
                 </NumberInputStepper>
               </NumberInput>
               <FormHelperText>
-                Adjust based on your GPU memory
+                  Training batch size
               </FormHelperText>
             </FormControl>
             
             <FormControl>
               <FormLabel>Image Size</FormLabel>
               <NumberInput 
+                  value={imageSize} 
+                  onChange={(_, value) => setImageSize(value)} 
                 min={320} 
                 max={1280} 
                 step={32}
-                value={imageSize} 
-                onChange={(_, value) => setImageSize(value)}
-                isDisabled={!uploadSuccess}
               >
                 <NumberInputField />
                 <NumberInputStepper>
@@ -371,48 +415,32 @@ const TrainModel = () => {
                 </NumberInputStepper>
               </NumberInput>
               <FormHelperText>
-                Larger sizes may improve detection of small objects
+                  Input image size (px)
               </FormHelperText>
             </FormControl>
+            </HStack>
             
-            {error && (
-              <Alert status="error" borderRadius="md">
-                <AlertIcon />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            
-            {trainingSuccess && (
-              <>
-                <Alert status="success" borderRadius="md">
-                  <AlertIcon />
-                  <AlertTitle>Training Started!</AlertTitle>
-                  <AlertDescription>
-                    Your model training has been initiated. You can monitor progress below.
-                  </AlertDescription>
-                </Alert>
-                
-                <Divider my={4} />
-                
-                <Heading size="md">Training Progress</Heading>
-                {modelId && (
-                  <TrainingProgress modelId={modelId} />
-                )}
-              </>
-            )}
-            
+            <Flex justifyContent="flex-end">
             <Button 
-              colorScheme="green" 
+                colorScheme="blue" 
               onClick={handleTrainModel} 
               isLoading={isTraining} 
-              loadingText="Starting Training" 
-              isDisabled={!uploadSuccess || isTraining}
+                loadingText="Starting training..."
+                disabled={isTraining}
             >
               Start Training
             </Button>
-          </VStack>
+            </Flex>
         </Box>
+        )}
+        
+        {error && (
+          <Alert status="error">
+            <AlertIcon />
+            <AlertTitle mr={2}>Error!</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
       </VStack>
     </Box>
   )

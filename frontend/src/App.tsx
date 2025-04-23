@@ -7,6 +7,7 @@ import TestModel from './pages/TestModel'
 import UploadModel from './pages/UploadModel'
 import TrainingPage from './pages/TrainingPage'
 import ModelsPage from './pages/ModelsPage'
+import DatasetsPage from './pages/DatasetsPage'
 
 function App() {
   return (
@@ -20,10 +21,11 @@ function App() {
           <Route path="/upload" element={<UploadModel />} />
           <Route path="/training" element={<TrainingPage />} />
           <Route path="/models" element={<ModelsPage />} />
+          <Route path="/datasets" element={<DatasetsPage />} />
         </Routes>
       </Box>
     </Box>
   )
 }
 
-export default App 
+export default App

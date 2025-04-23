@@ -2,10 +2,10 @@ import { Link as RouterLink } from 'react-router-dom'
 import {
   Box,
   Flex,
-  Text,
   Button,
   Stack,
   Link,
+  Image,
   useColorModeValue,
   useColorMode,
 } from '@chakra-ui/react'
@@ -26,15 +26,8 @@ const Navbar = () => {
       zIndex={10}
     >
       <Flex h={16} alignItems={'center'} justifyContent={'space-between'}>
-        <Box fontWeight="bold" fontSize="xl">
-          <Text 
-            as={RouterLink} 
-            to="/" 
-            color="brand.600"
-            _hover={{ textDecoration: 'none' }}
-          >
-            YOLOv8 Trainer
-          </Text>
+        <Box fontWeight="bold" fontSize="xl" display="flex" alignItems="center">
+          <Image src="/logo.png" alt="Logo" boxSize="150px" mr={2} />
         </Box>
 
         <Flex alignItems={'center'}>
@@ -90,6 +83,19 @@ const Navbar = () => {
               }}
             >
               Models
+            </Link>
+            <Link
+              as={RouterLink}
+              to="/datasets"
+              fontSize={'sm'}
+              fontWeight={500}
+              color={textColor}
+              _hover={{
+                textDecoration: 'none',
+                color: 'brand.500',
+              }}
+            >
+              Datasets
             </Link>
             <Link
               as={RouterLink}

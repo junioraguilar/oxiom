@@ -13,9 +13,7 @@ import {
   AlertDescription,
   Button,
 } from '@chakra-ui/react';
-import TrainingControls from '../components/TrainingControls';
 import TrainingProgress from '../components/TrainingProgress';
-import ModelsList from '../components/ModelsList';
 import axios from 'axios';
 
 const TrainingPage = () => {
@@ -115,8 +113,6 @@ const TrainingPage = () => {
 
         <Divider />
 
-        <ModelsList onSelectModel={selectTrainingSession} />
-
         {error && (
           <Alert status="error">
             <AlertIcon />
@@ -133,11 +129,6 @@ const TrainingPage = () => {
           </Alert>
         ) : (
           <>
-            <TrainingControls 
-              datasetId={datasetId} 
-              onTrainingStart={handleTrainingStart} 
-            />
-
             {trainingSessions.length > 0 && (
               <Box mt={4}>
                 <Heading size="md" mb={3}>Available Training Sessions</Heading>

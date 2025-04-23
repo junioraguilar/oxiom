@@ -3,7 +3,7 @@ import json
 import uuid
 import threading
 import time
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
@@ -12,7 +12,9 @@ import torch
 import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
-from models import db, YoloModel
+from models import db, YoloModel, Dataset
+import models
+import shutil
 
 app = Flask(__name__)
 CORS(app)
@@ -22,7 +24,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'uploads')
 MODELS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models')
 TRAIN_DATA_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'train_data')
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'mp4', 'avi', 'mov', 'zip'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'mp4', 'avi', 'mov', 'zip', 'pt'}
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_db.sqlite')
 
 # Create necessary directories if they don't exist
@@ -80,12 +82,6 @@ class TrainingCallback:
         if hasattr(trainer, 'metrics') and trainer.metrics:
             # Make sure we have the metrics dictionary and it's not empty
             try:
-                metrics = {
-                    'box_loss': float(trainer.metrics.get('box_loss', 0)),
-                    'cls_loss': float(trainer.metrics.get('cls_loss', 0)),
-                    'dfl_loss': float(trainer.metrics.get('dfl_loss', 0))
-                }
-                
                 # Try to extract validation metrics if available
                 if 'metrics/precision(B)' in trainer.metrics:
                     metrics['precision'] = float(trainer.metrics.get('metrics/precision(B)', 0))
@@ -475,6 +471,7 @@ def upload_dataset():
             file.save(file_path)
             
             print(f"Dataset saved to {file_path}, size: {os.path.getsize(file_path)} bytes")
+            file_size = os.path.getsize(file_path)
             
             # Extract the zip file
             import zipfile
@@ -531,17 +528,64 @@ names: ['object']  # class names
             
             print(f"Data YAML path: {data_yaml_path}")
             
+            # Extract class names from the YAML file
+            classes = []
+            try:
+                import yaml
+                with open(data_yaml_path, 'r') as f:
+                    yaml_data = yaml.safe_load(f)
+                    if 'names' in yaml_data:
+                        classes = yaml_data['names']
+            except Exception as e:
+                print(f"Error extracting classes from YAML: {str(e)}")
+            
+            # Salvar no banco de dados
+            # Extrair nome do dataset do nome do arquivo (remover .zip)
+            dataset_name = os.path.splitext(filename)[0]
+            
+            with app.app_context():
+                dataset = Dataset(
+                    id=dataset_id,
+                    name=dataset_name,
+                    file_path=os.path.relpath(file_path, app.config['TRAIN_DATA_FOLDER']),
+                    yaml_path=os.path.relpath(data_yaml_path, app.config['TRAIN_DATA_FOLDER']),
+                    file_size=file_size,
+                )
+                dataset.classes = classes
+                
+                db.session.add(dataset)
+                db.session.commit()
+            
             return jsonify({
                 'message': 'Dataset uploaded successfully',
                 'dataset_id': dataset_id,
+                'name': dataset_name,
                 'path': dataset_dir,
-                'yaml_path': data_yaml_path
+                'yaml_path': data_yaml_path,
+                'classes': classes
             }), 200
         except Exception as e:
             print(f"Error during dataset upload: {str(e)}")
             return jsonify({'error': f'Error processing dataset: {str(e)}'}), 500
     
     return jsonify({'error': 'File type not allowed. Please upload a ZIP file'}), 400
+
+@app.route('/api/datasets', methods=['GET'])
+def list_datasets():
+    """Lista todos os datasets disponíveis"""
+    try:
+        with app.app_context():
+            db_datasets = Dataset.query.order_by(Dataset.created_at.desc()).all()
+            
+            datasets = []
+            for dataset in db_datasets:
+                datasets.append(dataset.to_dict())
+            
+            return jsonify({'datasets': datasets}), 200
+            
+    except Exception as e:
+        print(f"Error listing datasets: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/models', methods=['GET'])
 def list_models():
@@ -758,20 +802,33 @@ def train_model():
     if not data or 'dataset_id' not in data:
         return jsonify({'error': 'Missing required parameters'}), 400
     
-    dataset_path = os.path.join(app.config['TRAIN_DATA_FOLDER'], data['dataset_id'])
-    
-    if not os.path.exists(dataset_path):
-        return jsonify({'error': 'Dataset not found'}), 404
-    
     try:
+        # Get dataset from database
+        with app.app_context():
+            dataset = Dataset.query.get(data['dataset_id'])
+            if not dataset:
+                return jsonify({'error': 'Dataset not found in database'}), 404
+        
+        # Dataset path from the uploads directory
+        dataset_path = os.path.join(app.config['TRAIN_DATA_FOLDER'], dataset.id)
+    
+        if not os.path.exists(dataset_path):
+                return jsonify({'error': 'Dataset files not found on disk'}), 404
+    
         # Configure training parameters
         epochs = data.get('epochs', 50)
         batch_size = data.get('batch_size', 16)
         img_size = data.get('img_size', 640)
-        model_name = data.get('name', 'Unnamed model')
+        model_name = data.get('name', f"Model from {dataset.name}")
         
-        # Verificar se o data.yaml existe
+        # Use the yaml_path from the database or verify its existence
         data_yaml_path = os.path.join(dataset_path, 'data.yaml')
+        if dataset.yaml_path:
+            full_yaml_path = os.path.join(app.config['TRAIN_DATA_FOLDER'], dataset.yaml_path)
+            if os.path.exists(full_yaml_path):
+                data_yaml_path = full_yaml_path
+        
+        # Double-check that the YAML exists
         if not os.path.exists(data_yaml_path):
             # Procurar novamente em caso de problemas
             yaml_found = False
@@ -800,15 +857,16 @@ def train_model():
         model_id = str(uuid.uuid4())
         model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
         
-        # Ler as classes do arquivo YAML para armazenar no banco de dados
-        classes = []
-        try:
-            import yaml
-            with open(data_yaml_path, 'r') as yaml_file:
-                yaml_data = yaml.safe_load(yaml_file)
-                classes = yaml_data.get('names', [])
-        except Exception as e:
-            print(f"Failed to read classes from YAML: {str(e)}")
+        # Use the classes from the dataset or read them again from the YAML
+        classes = dataset.classes
+        if not classes:
+            try:
+                import yaml
+                with open(data_yaml_path, 'r') as yaml_file:
+                    yaml_data = yaml.safe_load(yaml_file)
+                    classes = yaml_data.get('names', [])
+            except Exception as e:
+                print(f"Failed to read classes from YAML: {str(e)}")
         
         # Criar registro no banco de dados
         with app.app_context():
@@ -996,9 +1054,12 @@ def stop_training():
         'status': 'stopped'
     }), 200
 
-@app.route('/api/models/<model_id>/delete', methods=['DELETE'])
+@app.route('/api/models/<model_id>/delete', methods=['DELETE', 'OPTIONS'])
 def delete_model(model_id):
     """Delete a trained model from database and file system"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         # Verificar se o modelo existe no banco de dados
         with app.app_context():
@@ -1046,6 +1107,44 @@ def delete_model(model_id):
     except Exception as e:
         print(f"Error deleting model: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/datasets/<dataset_id>/delete', methods=['DELETE', 'OPTIONS'])
+def delete_dataset(dataset_id):
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        with app.app_context():
+            dataset = Dataset.query.get(dataset_id)
+            if not dataset:
+                return jsonify({'error': 'Dataset not found'}), 404
+            # Remove dataset directory
+            dataset_dir = os.path.join(app.config['TRAIN_DATA_FOLDER'], dataset_id)
+            if os.path.exists(dataset_dir):
+                shutil.rmtree(dataset_dir)
+            # Delete from database
+            db.session.delete(dataset)
+            db.session.commit()
+        return jsonify({'message': 'Dataset deleted successfully'}), 200
+    except Exception as e:
+        print(f"Error deleting dataset {dataset_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/datasets/<dataset_id>/download', methods=['GET', 'OPTIONS'])
+def download_dataset_file(dataset_id):
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+    # Retrieve dataset record
+    dataset = Dataset.query.get(dataset_id)
+    if not dataset:
+        return jsonify({'error': 'Dataset not found'}), 404
+    # Serve the stored file
+    file_abs = os.path.join(app.config['TRAIN_DATA_FOLDER'], dataset.file_path)
+    print(f"Downloading dataset {dataset_id} from {file_abs}")
+    if not os.path.exists(file_abs):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(file_abs, as_attachment=True)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000) 
