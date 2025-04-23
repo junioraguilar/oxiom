@@ -36,7 +36,7 @@ os.makedirs(TRAIN_DATA_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODELS_FOLDER'] = MODELS_FOLDER
 app.config['TRAIN_DATA_FOLDER'] = TRAIN_DATA_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # Aumentando para 1GB max
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # Increase to 1GB max
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATABASE_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -46,20 +46,22 @@ db.init_app(app)
 # Create tables if they don't exist
 with app.app_context():
     db.create_all()
-    # Corrigir status de modelos "em andamento" após restart
+    # Fix status of models "in progress" after restart
     models_in_progress = YoloModel.query.filter(YoloModel.status.in_(['training', 'starting', 'running'])).all()
     for model in models_in_progress:
-        model.status = 'error'  # ou 'stopped' se preferir
-        model.error_message = 'Treinamento interrompido por reinicialização do backend.'
+        model.status = 'error'  # or 'stopped' if preferred
+        model.error_message = 'Training interrupted by backend restart.'
         db.session.commit()
 
-# Dicionário para armazenar o status dos treinamentos
+# Dictionary to store training status
 training_status = {}
+# Dictionary for training stop flags
+training_stop_flags = {}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Classe para armazenar callbacks de treinamento
+# Class to store training callbacks
 class TrainingCallback:
     def __init__(self, model_id):
         self.model_id = model_id
@@ -84,10 +86,9 @@ class TrainingCallback:
         # Calculate progress as a decimal (0.0 to 1.0)
         progress = float(self.current_epoch) / float(self.total_epochs)
         
-        # Extrair métricas
+        # Extract metrics
         metrics = {}
         if hasattr(trainer, 'metrics') and trainer.metrics:
-            # Make sure we have the metrics dictionary and it's not empty
             try:
                 # Try to extract validation metrics if available
                 if 'metrics/precision(B)' in trainer.metrics:
@@ -101,17 +102,17 @@ class TrainingCallback:
                 print(f"Error extracting metrics: {str(e)}")
                 print(f"Trainer metrics: {trainer.metrics}")
         
-        # Adiciona GPU_mem (em GB)
+        # Add GPU_mem (in GB)
         gpu_mem = 0.0
         try:
             import pynvml
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            gpu_mem = meminfo.used / (1024 ** 3)  # em GB
+            gpu_mem = meminfo.used / (1024 ** 3)  # in GB
             pynvml.nvmlShutdown()
         except Exception as e:
-            # Fallback para torch se pynvml não estiver disponível
+            # Fallback to torch if pynvml is not available
             try:
                 import torch
                 if torch.cuda.is_available():
@@ -120,8 +121,7 @@ class TrainingCallback:
                 gpu_mem = 0.0
         metrics['GPU_mem'] = round(gpu_mem, 3)
         
-        # Porcentagem da epoch em tempo real
-        # Se trainer tiver batches, pode-se adicionar aqui (simulado como 100% ao final da epoch)
+        # Real-time epoch percent (simulate as 100% at epoch end)
         metrics['epoch_percent'] = 100.0
         
         self.metrics = metrics
@@ -181,7 +181,7 @@ class TrainingCallback:
         })
 
 def update_training_info(model_id, info):
-    """Atualiza o status do treinamento e emite via Socket.IO"""
+    """Update training status and emit via Socket.IO"""
     training_status[model_id] = info
     
     # Add debug printing for metrics
@@ -189,7 +189,7 @@ def update_training_info(model_id, info):
     print(f"Emitting training update for model {model_id}: {info['status']} - Epoch {info['current_epoch']}/{info['total_epochs']} - Progress {info['progress']*100:.1f}%")
     print(f"  {metrics_debug}")
     
-    # Atualizar o banco de dados
+    # Update the database
     with app.app_context():
         model = YoloModel.query.get(model_id)
         if model:
@@ -202,7 +202,7 @@ def update_training_info(model_id, info):
             if 'error_message' in info:
                 model.error_message = info['error_message']
             
-            # Verificar se o arquivo de modelo existe e atualizar o tamanho
+            # Check if the model file exists and update its size
             model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
             best_model_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
             
@@ -221,13 +221,14 @@ def update_training_info(model_id, info):
     })
     print(f"Training update - Model {model_id}: {info['status']} - Epoch {info['current_epoch']}/{info['total_epochs']} - Progress {info['progress']*100:.1f}%")
 
-# Função para executar o treinamento em uma thread separada
+# Function to run training in a separate thread
 def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, model_id, model_path):
     try:
-        # Configurar callback
+        # Configure callback
         callback = TrainingCallback(model_id)
-        
-        # Atualizar status para "iniciando"
+        # Initialize stop flag
+        training_stop_flags[model_id] = False
+        # Update status to "starting"
         update_training_info(model_id, {
             'status': 'starting',
             'current_epoch': 0,
@@ -237,29 +238,33 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
             'device': device,
             'yaml_path': data_yaml_path
         })
-        
         # Try an alternative approach for handling callbacks
         # Some versions of Ultralytics may use a completely different method
         print("Using an alternative approach to monitor training instead of direct callbacks")
-
         # Create a thread to monitor training progress
         def monitor_training_progress():
             current_epoch = 0
             last_epoch_batches = 0
             while current_epoch < epochs:
+                # --- NEW: Check if it needs to stop ---
+                if training_stop_flags.get(model_id):
+                    print("Training stopped by user request (flag detected in monitor thread)")
+                    callback.status = "stopped"
+                    callback.on_train_end(None)
+                    break
                 try:
-                    # Sleep for 0.1 segundos para atualização em tempo real
+                    # Sleep for 0.1 seconds for real-time updates
                     time.sleep(0.1)
                     if not hasattr(model, 'trainer'):
                         print("Model has no trainer attribute yet, waiting...")
                         continue
                     try:
-                        # Obtem progresso dentro da epoch
+                        # Get progress within the epoch
                         if hasattr(model.trainer, 'epoch') and hasattr(model.trainer, 'dataloader'):
                             new_epoch = model.trainer.epoch + 1
                             dataloader = getattr(model.trainer, 'dataloader', None)
                             total_batches = len(dataloader) if dataloader is not None else 0
-                            # Tenta diferentes atributos para batch atual
+                            # Try different attributes for the current batch
                             batch_idx = None
                             for attr in ['batch_i', 'batch', 'iter', 'iteration', 'batch_idx']:
                                 if hasattr(model.trainer, attr):
@@ -269,22 +274,22 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
                                 batch_idx = 0
                             epoch_percent = float(batch_idx + 1) / float(total_batches) * 100 if total_batches else 0.0
                             print(f"[DEBUG] Epoch: {new_epoch}, Batch: {batch_idx}/{total_batches}, Percent: {epoch_percent:.1f}")
-                            # Atualiza epoch_percent em tempo real
+                            # Update epoch_percent in real-time
                             info = training_status.get(model_id, {}).copy()
                             if 'metrics' not in info:
                                 info['metrics'] = {}
                             info['metrics']['epoch_percent'] = round(epoch_percent, 1)
-                            # Atualiza GPU_mem em tempo real
+                            # Update GPU_mem in real-time
                             gpu_mem = 0.0
                             try:
                                 import pynvml
                                 pynvml.nvmlInit()
                                 handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                                 meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                                gpu_mem = meminfo.used / (1024 ** 3)  # em GB
+                                gpu_mem = meminfo.used / (1024 ** 3)  # in GB
                                 pynvml.nvmlShutdown()
                             except Exception as e:
-                                # Fallback para torch se pynvml não estiver disponível
+                                # Fallback to torch if pynvml is not available
                                 try:
                                     import torch
                                     if torch.cuda.is_available():
@@ -307,25 +312,21 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
                         break
                 except Exception as e:
                     print(f"Error in training monitor thread: {str(e)}")
-        
         # Start the monitor as a separate thread
         monitor_thread = None
         try:
             if hasattr(model, 'add_callback'):
                 # If add_callback exists, we'll try it first
                 print("Registering callbacks using model.add_callback")
-                
                 # Wrap each callback registration in its own try-except
                 try:
                     model.add_callback('on_train_start', callback.on_train_start)
                 except Exception as e:
                     print(f"Error registering on_train_start callback: {str(e)}")
-                
                 try:
                     model.add_callback('on_train_epoch_end', callback.on_train_epoch_end)
                 except Exception as e:
                     print(f"Error registering on_train_epoch_end callback: {str(e)}")
-                
                 try:
                     model.add_callback('on_train_end', callback.on_train_end)
                 except Exception as e:
@@ -339,18 +340,23 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
             print(f"Error setting up training monitoring: {str(e)}")
             # If all fails, we'll rely on manual updates at the end
         
-        # Iniciar treinamento - in a separate try-except to isolate it from callback errors
+        # Start training - instead of a manual loop, call once with correct epochs
         try:
-            results = model.train(
-                data=data_yaml_path,
-                epochs=epochs,
-                batch=batch_size,
-                imgsz=img_size,
-                device=device,
-                project=app.config['MODELS_FOLDER'],
-                name=model_id,
-                exist_ok=True
-            )
+            if training_stop_flags.get(model_id):
+                print("Training stopped by user request before starting train().")
+                callback.status = "stopped"
+                callback.on_train_end(None)
+            else:
+                results = model.train(
+                    data=data_yaml_path,
+                    epochs=epochs,
+                    batch=batch_size,
+                    imgsz=img_size,
+                    device=device,
+                    project=app.config['MODELS_FOLDER'],
+                    name=model_id,
+                    exist_ok=True
+                )
         except Exception as e:
             print(f"Error during model training: {str(e)}")
             raise  # Re-raise to handle in outer try-except
@@ -373,7 +379,7 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
                 'metrics': callback.metrics if hasattr(callback, 'metrics') else {}
             })
         
-        # Salvar modelo após treinamento
+        # Save the model after training
         model_saved = False
         try:
             print("Attempting to save the model...")
@@ -399,34 +405,10 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
             
             print(f"Model saved: {model_saved}")
             if not model_saved:
-                print("WARNING: No viable save method found. Attempting to identify alternative methods...")
-                # Diagnostics to help find alternative methods
-                if hasattr(model, 'model'):
-                    print(f"Model.model type: {type(model.model)}")
-                    if hasattr(model.model, 'save'):
-                        print(f"Model.model.save type: {type(model.model.save)}")
-                        print(f"Model.model.save content: {model.model.save}")
-                        
-                    # Check for other potential saving methods
-                    for attr_name in dir(model):
-                        if 'save' in attr_name.lower() or 'export' in attr_name.lower():
-                            attr = getattr(model, attr_name)
-                            print(f"Found potential save method: model.{attr_name}, type: {type(attr)}, callable: {callable(attr)}")
-                            
-                    for attr_name in dir(model.model):
-                        if 'save' in attr_name.lower() or 'export' in attr_name.lower():
-                            attr = getattr(model.model, attr_name)
-                            print(f"Found potential save method: model.model.{attr_name}, type: {type(attr)}, callable: {callable(attr)}")
-            
-
+                print("Warning: Model may not have been saved correctly!")
         except Exception as e:
             print(f"Error saving model: {str(e)}")
-            print(f"Error type: {type(e)}")
-            import traceback
-            traceback.print_exc()
-        
         return True
-        
     except Exception as e:
         error_msg = str(e)
         print(f"Error in training thread: {error_msg}")
@@ -438,6 +420,9 @@ def run_training(model, data_yaml_path, epochs, batch_size, img_size, device, mo
             'progress': 0
         })
         return False
+    finally:
+        # End of the main try block in run_training
+        return True
 
 @app.route('/api/upload-image', methods=['POST'])
 def upload_file():
@@ -475,18 +460,18 @@ def upload_model():
         return jsonify({'error': 'No selected file'}), 400
     
     if file and allowed_file(file.filename):
-        # Gerar ID único para o modelo
+        # Generate a unique ID for the model
         model_id = str(uuid.uuid4())
         filename = f"{model_id}_" + secure_filename(file.filename)
         file_path = os.path.join(app.config['MODELS_FOLDER'], filename)
         
-        # Salvar o arquivo
+        # Save the file
         file.save(file_path)
         
-        # Obter o tamanho do arquivo
+        # Get the file size
         file_size = os.path.getsize(file_path)
         
-        # Criar registro no banco de dados
+        # Create a record in the database
         with app.app_context():
             upload_model = YoloModel(
                 id=model_id,
@@ -538,7 +523,7 @@ def upload_dataset():
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(dataset_dir)
             
-            # Verificar se existe o arquivo data.yaml no diretório raiz ou em subdiretórios
+            # Check if there is a data.yaml file in the root directory or subdirectories
             yaml_path = None
             for root, dirs, files in os.walk(dataset_dir):
                 for file in files:
@@ -549,12 +534,12 @@ def upload_dataset():
                     break
             
             if not yaml_path:
-                # Se não encontrou data.yaml, procurar por qualquer arquivo .yaml
+                # If no data.yaml is found, look for any .yaml file
                 for root, dirs, files in os.walk(dataset_dir):
                     for file in files:
                         if file.lower().endswith('.yaml'):
                             yaml_path = os.path.join(root, file)
-                            # Copiar para a raiz como data.yaml
+                            # Copy to the root as data.yaml
                             import shutil
                             shutil.copy(yaml_path, os.path.join(dataset_dir, 'data.yaml'))
                             yaml_path = os.path.join(dataset_dir, 'data.yaml')
@@ -562,16 +547,16 @@ def upload_dataset():
                     if yaml_path:
                         break
             
-            # Verificar uma última vez se encontrou o arquivo
+            # Final check if a YAML file was found
             data_yaml_path = os.path.join(dataset_dir, 'data.yaml')
             if not os.path.exists(data_yaml_path) and yaml_path:
-                # Se temos um yaml mas não está na raiz, copiar para a raiz
+                # If we have a YAML but it's not in the root, copy it to the root
                 import shutil
                 shutil.copy(yaml_path, data_yaml_path)
             
-            # Verificação final
+            # Final check
             if not os.path.exists(data_yaml_path):
-                # Não encontrou nenhum arquivo YAML, criar um básico
+                # No YAML file found, create a basic one
                 print("No YAML file found, creating a default one")
                 with open(data_yaml_path, 'w') as f:
                     f.write("""
@@ -599,8 +584,8 @@ names: ['object']  # class names
             except Exception as e:
                 print(f"Error extracting classes from YAML: {str(e)}")
             
-            # Salvar no banco de dados
-            # Extrair nome do dataset do nome do arquivo (remover .zip)
+            # Save to the database
+            # Extract the dataset name from the file name (remove .zip)
             dataset_name = os.path.splitext(filename)[0]
             
             with app.app_context():
@@ -632,7 +617,7 @@ names: ['object']  # class names
 
 @app.route('/api/datasets', methods=['GET'])
 def list_datasets():
-    """Lista todos os datasets disponíveis"""
+    """List all available datasets"""
     try:
         with app.app_context():
             db_datasets = Dataset.query.order_by(Dataset.created_at.desc()).all()
@@ -649,7 +634,7 @@ def list_datasets():
 
 @app.route('/api/models', methods=['GET'])
 def list_models():
-    """Lista todos os modelos disponíveis a partir do banco de dados"""
+    """List all available models from the database"""
     try:
         with app.app_context():
             db_models = YoloModel.query.filter(
@@ -658,11 +643,11 @@ def list_models():
             
             models = []
             for model in db_models:
-                # Verificar se o arquivo do modelo existe
+                # Check if the model file exists in the file system
                 model_path = None
                 model_exists = False
                 
-                # Verificar caminhos possíveis
+                # Check possible locations for the model file
                 if model.file_path:
                     full_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
                     if os.path.exists(full_path):
@@ -670,14 +655,14 @@ def list_models():
                         model_exists = True
                 
                 if not model_exists:
-                    # Verificar com nome direto do ID
+                    # Check with the direct ID name
                     direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model.id}.pt")
                     if os.path.exists(direct_path):
                         model_path = direct_path
                         model_exists = True
                 
                 if not model_exists:
-                    # Verificar no diretório de treinamento
+                    # Check in the training directory
                     best_path = os.path.join(app.config['MODELS_FOLDER'], model.id, "weights", "best.pt")
                     if os.path.exists(best_path):
                         model_path = best_path
@@ -701,11 +686,11 @@ def list_models():
 
 @app.route('/api/training-status', methods=['GET'])
 def get_training_status():
-    """Retorna o status de todos os treinamentos em andamento no formato esperado pelo frontend"""
+    """Return the status of all ongoing trainings in the format expected by the frontend"""
     try:
         model_id = request.args.get('model_id')
         if model_id:
-            # Consulta individual (mantém compatibilidade)
+            # Individual query (maintains compatibility)
             with app.app_context():
                 model = YoloModel.query.get(model_id)
                 if not model:
@@ -724,7 +709,7 @@ def get_training_status():
                     info = model.to_dict()
                 return jsonify({'training_sessions': [{ 'model_id': model_id, 'info': info }]})
         else:
-            # Consulta todos os modelos em andamento
+            # Query all ongoing models
             with app.app_context():
                 training_models = YoloModel.query.filter(
                     YoloModel.status.in_(['training', 'starting', 'running'])
@@ -758,22 +743,22 @@ def detect_objects():
         return jsonify({'error': 'No model specified'}), 400
     
     try:
-        # Buscar o modelo no banco de dados
+        # Find the model in the database
         with app.app_context():
             model_record = YoloModel.query.get(model_id)
             if not model_record:
                 return jsonify({'error': f'Model with ID {model_id} not found in database'}), 404
         
-        # Verificar possíveis localizações do arquivo do modelo
+        # Check possible locations for the model file
         model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
         if not os.path.exists(model_path):
-            # Verificar se é um modelo carregado com nome personalizado
+            # Check if it's a model uploaded with a custom name
             if model_record.file_path and model_record.file_path != f"{model_id}.pt":
                 alt_model_path = os.path.join(app.config['MODELS_FOLDER'], model_record.file_path)
                 if os.path.exists(alt_model_path):
                     model_path = alt_model_path
                 else:
-                    # Verificar em diretórios de treinamento
+                    # Check in the training directory
                     best_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
                     if os.path.exists(best_path):
                         model_path = best_path
@@ -850,7 +835,7 @@ def train_model():
         return jsonify({'error': 'Missing required parameters'}), 400
     
     try:
-        # Get dataset from database
+        # Get the dataset from the database
         with app.app_context():
             dataset = Dataset.query.get(data['dataset_id'])
             if not dataset:
@@ -877,13 +862,12 @@ def train_model():
         
         # Double-check that the YAML exists
         if not os.path.exists(data_yaml_path):
-            # Procurar novamente em caso de problemas
+            # Look again in case of issues
             yaml_found = False
             for root, dirs, files in os.walk(dataset_path):
                 for file in files:
                     if file.lower() == 'data.yaml':
                         data_yaml_path = os.path.join(root, file)
-                        yaml_found = True
                         break
                 if yaml_found:
                     break
@@ -915,7 +899,7 @@ def train_model():
             except Exception as e:
                 print(f"Failed to read classes from YAML: {str(e)}")
         
-        # Criar registro no banco de dados
+        # Create a record in the database
         with app.app_context():
             training_model = YoloModel(
                 id=model_id,
@@ -937,7 +921,7 @@ def train_model():
             db.session.add(training_model)
             db.session.commit()
         
-        # Notificar imediatamente o frontend sobre o novo treinamento
+        # Notify the frontend immediately about the new training
         update_training_info(model_id, {
             'status': 'starting',
             'current_epoch': 0,
@@ -948,7 +932,7 @@ def train_model():
             'yaml_path': data_yaml_path
         })
         
-        # Iniciar treinamento em uma thread separada
+        # Start training in a separate thread
         training_thread = threading.Thread(
             target=run_training,
             args=(model, data_yaml_path, epochs, batch_size, img_size, device, model_id, model_path),
@@ -986,12 +970,12 @@ def list_trained_models():
     trained_models = []
     
     try:
-        # Buscar modelos no banco de dados
+        # Find models in the database
         with app.app_context():
             models = YoloModel.query.order_by(YoloModel.created_at.desc()).all()
             
             for model in models:
-                # Verificar se o arquivo do modelo existe no sistema de arquivos
+                # Check if the model file exists in the file system
                 model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model.id}.pt")
                 best_model_path = os.path.join(app.config['MODELS_FOLDER'], model.id, "weights", "best.pt")
                 
@@ -999,7 +983,7 @@ def list_trained_models():
                 best_model_exists = os.path.exists(best_model_path)
                 model_exists = model_file_exists or best_model_exists
                 
-                # Atualizar o tamanho do arquivo se existir
+                # Update the file size if it exists
                 if model_file_exists:
                     file_size = os.path.getsize(model_path)
                     if model.file_size != file_size:
@@ -1011,7 +995,7 @@ def list_trained_models():
                         model.file_size = file_size
                         db.session.commit()
                 
-                # Converter o modelo para dicionário e adicionar à lista
+                # Convert the model to a dictionary and add it to the list
                 model_dict = model.to_dict()
                 model_dict['model_exists'] = model_exists
                 trained_models.append(model_dict)
@@ -1025,13 +1009,13 @@ def list_trained_models():
 def download_model(model_id):
     """Download a specific trained model"""
     try:
-        # Verificar se o modelo existe no banco de dados
+        # Check if the model exists in the database
         with app.app_context():
             model = YoloModel.query.get(model_id)
             if not model:
                 return jsonify({'error': 'Model not found in database'}), 404
         
-        # Verificar no sistema de arquivos
+        # Check in the file system
         direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
         if os.path.exists(direct_path):
             return send_from_directory(
@@ -1041,7 +1025,7 @@ def download_model(model_id):
                 attachment_filename=f"yolo_model_{model_id}.pt"
             )
         
-        # Verificar se é um modelo que foi enviado com nome personalizado
+        # Check if it's a model uploaded with a custom name
         if model.file_path and model.file_path != f"{model_id}.pt":
             model_file_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
             if os.path.exists(model_file_path):
@@ -1053,7 +1037,7 @@ def download_model(model_id):
                     attachment_filename=f"yolo_model_{model_id}_{filename.split('_', 1)[1] if '_' in filename else filename}"
                 )
         
-        # Verificar na estrutura de diretórios de treinamento
+        # Check in the training directory
         best_model_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
         if os.path.exists(best_model_path):
             weights_dir = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights")
@@ -1064,7 +1048,7 @@ def download_model(model_id):
                 attachment_filename=f"yolo_model_{model_id}_best.pt"
             )
         
-        # Nenhum arquivo encontrado
+        # No file found
         return jsonify({'error': 'Model file not found in filesystem'}), 404
     except Exception as e:
         print(f"Error downloading model: {str(e)}")
@@ -1072,7 +1056,7 @@ def download_model(model_id):
 
 @app.route('/api/training/stop', methods=['POST'])
 def stop_training():
-    """Interrompe um treinamento em andamento"""
+    """Stop an ongoing training"""
     data = request.json
     
     if not data or 'model_id' not in data:
@@ -1080,22 +1064,22 @@ def stop_training():
     
     model_id = data['model_id']
     
-    # Verificar se o modelo existe no banco de dados
+    # Check if the model exists in the database
     with app.app_context():
         model = YoloModel.query.get(model_id)
         if not model:
             return jsonify({'error': 'Training session not found'}), 404
         
-        # Verificar se o treinamento já está completo ou em erro
+        # Check if the training is already complete or in error
         if model.status in ['completed', 'error', 'stopped']:
             return jsonify({'message': f'Training already in {model.status} state'}), 200
         
-        # Atualizar o status do modelo no banco de dados
+        # Update the model status in the database
         model.status = 'stopped'
         model.error_message = 'Training stopped by user'
         db.session.commit()
     
-    # Atualizar o status in-memory também, se existir
+    # Update the in-memory status if it exists
     if model_id in training_status:
         update_training_info(model_id, {
             'status': 'stopped',
@@ -1106,53 +1090,56 @@ def stop_training():
             'error_message': 'Training stopped by user'
         })
     
+    # Signal stop to the training thread
+    training_stop_flags[model_id] = True
+    
     return jsonify({
-        'message': 'Training stop signal sent. The training will stop at the end of the current epoch.',
+        'message': 'Training stop signal sent. The training will stop at the next check.',
         'model_id': model_id,
         'status': 'stopped'
     }), 200
 
 @app.route('/api/models/<model_id>/delete', methods=['DELETE', 'OPTIONS'])
 def delete_model(model_id):
-    """Delete a trained model from database and file system"""
+    """Delete a trained model from the database and file system"""
     if request.method == 'OPTIONS':
         return '', 200
     
     try:
-        # Verificar se o modelo existe no banco de dados
+        # Check if the model exists in the database
         with app.app_context():
             model = YoloModel.query.get(model_id)
             if not model:
                 return jsonify({'error': 'Model not found in database'}), 404
             
-            # Deletar os arquivos antes de remover do banco de dados
+            # Delete the files before removing from the database
             deleted_files = []
 
-            # Verificar se existe arquivo direto com ID do modelo
+            # Check if there is a direct file with the model ID
             direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
             if os.path.exists(direct_path):
                 os.remove(direct_path)
                 deleted_files.append(direct_path)
             
-            # Verificar se existe arquivo com nome personalizado
+            # Check if there is a file with a custom name
             if model.file_path and model.file_path != f"{model_id}.pt":
                 custom_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
                 if os.path.exists(custom_path):
                     os.remove(custom_path)
                     deleted_files.append(custom_path)
             
-            # Verificar se existe diretório de resultados
+            # Check if there is a training directory
             results_dir = os.path.join(app.config['MODELS_FOLDER'], model_id)
             if os.path.exists(results_dir) and os.path.isdir(results_dir):
                 import shutil
                 shutil.rmtree(results_dir)
                 deleted_files.append(results_dir)
             
-            # Remover do banco de dados
+            # Remove from the database
             db.session.delete(model)
             db.session.commit()
             
-            # Remover do dicionário de status, se existir
+            # Remove from the in-memory status if it exists
             if model_id in training_status:
                 del training_status[model_id]
             

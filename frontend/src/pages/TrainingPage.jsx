@@ -26,41 +26,16 @@ const TrainingPage = () => {
   const [trainingSessions, setTrainingSessions] = useState([]);
 
   useEffect(() => {
-    // Se houver um treinamento em andamento, redireciona para o monitor
-    const checkAndRedirect = async () => {
-      try {
-        const response = await axios.get('http://localhost:5000/api/training-status');
-        if (response.data.training_sessions && response.data.training_sessions.length > 0) {
-          const activeSession = response.data.training_sessions.find(
-            session => session.info.status === 'training' || 
-                       session.info.status === 'starting' || 
-                       session.info.status === 'running'
-          );
-          if (activeSession) {
-            window.location.href = `/monitor/${activeSession.model_id}`;
-            return;
-          }
-        }
-      } catch (err) {
-        // Ignora erros silenciosamente
-      }
-    };
-    checkAndRedirect();
-  }, []);
-
-  useEffect(() => {
     // Fetch available datasets when component mounts
     const fetchDatasets = async () => {
       try {
         setLoading(true);
         const response = await axios.get('http://localhost:5000/api/datasets');
         setDatasets(response.data.datasets || []);
-        
         // If datasets exist, select the first one
         if (response.data.datasets && response.data.datasets.length > 0) {
           setDatasetId(response.data.datasets[0].id);
         }
-        
         setError(null);
       } catch (err) {
         console.error('Error fetching datasets:', err);
@@ -76,14 +51,12 @@ const TrainingPage = () => {
         const response = await axios.get('http://localhost:5000/api/training-status');
         if (response.data.training_sessions && response.data.training_sessions.length > 0) {
           setTrainingSessions(response.data.training_sessions);
-          
           // Find any active training session
           const activeSession = response.data.training_sessions.find(
             session => session.info.status === 'training' || 
-                      session.info.status === 'starting' || 
-                      session.info.status === 'running'
+                       session.info.status === 'starting' || 
+                       session.info.status === 'running'
           );
-          
           if (activeSession) {
             setCurrentModelId(activeSession.model_id);
             toast({
@@ -102,10 +75,8 @@ const TrainingPage = () => {
 
     fetchDatasets();
     fetchTrainingSessions();
-    
     // Set an interval to refresh training sessions every 10 seconds
     const interval = setInterval(fetchTrainingSessions, 10000);
-    
     // Clear the interval when component unmounts
     return () => clearInterval(interval);
   }, [toast]);
@@ -133,9 +104,7 @@ const TrainingPage = () => {
           <Heading as="h1" size="xl">YOLOv8 Model Training</Heading>
           <Text mt={2} color="gray.600">Configure and monitor your object detection model training</Text>
         </Box>
-
         <Divider />
-
         {error && (
           <Alert status="error">
             <AlertIcon />
@@ -143,7 +112,6 @@ const TrainingPage = () => {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-
         {datasets.length === 0 && !loading && !error ? (
           <Alert status="warning">
             <AlertIcon />
@@ -152,32 +120,18 @@ const TrainingPage = () => {
           </Alert>
         ) : (
           <>
-            {trainingSessions.length > 0 && (
-              <Box mt={4}>
-                <Heading size="md" mb={3}>Available Training Sessions</Heading>
-                <VStack spacing={2} align="stretch">
-                  {trainingSessions.map(session => (
-                    <Button 
-                      key={session.model_id}
-                      onClick={() => selectTrainingSession(session.model_id)}
-                      colorScheme={currentModelId === session.model_id ? 'blue' : 'gray'}
-                      justifyContent="space-between"
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Text>Model: {session.model_id.substring(0, 8)}...</Text>
-                      <Text>Status: {session.info.status}</Text>
-                      <Text>Progress: {Math.round(session.info.progress * 100)}%</Text>
-                    </Button>
-                  ))}
-                </VStack>
+            {trainingSessions.length === 0 && !loading && !error && (
+              <Box mt={8} textAlign="center">
+                <Heading size="md" color="gray.600" mb={2}>No training in progress</Heading>
+                <Text color="gray.500">Start a new training session to see progress here.</Text>
               </Box>
             )}
-
             {currentModelId && (
-              <TrainingProgress 
-                modelId={currentModelId} 
-              />
+              <Box mt={6}>
+                <TrainingProgress 
+                  modelId={currentModelId} 
+                />
+              </Box>
             )}
           </>
         )}
