@@ -12,21 +12,40 @@ import {
   Alert,
   AlertIcon,
   useToast,
-  Flex
+  Flex,
+  Slider,
+  SliderTrack,
+  SliderFilledTrack,
+  SliderThumb
 } from '@chakra-ui/react'
 import axios from 'axios'
+import DetectionBox from '../components/DetectionBox'
 
 interface Model {
+  id: string
   name: string
   path: string
   size: number
+  classes?: string[]
 }
 
 interface Detection {
-  bbox: [number, number, number, number]
-  confidence: number
   class_id: number
   class_name: string
+  confidence: number
+  box: {
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    width: number
+    height: number
+  }
+}
+
+interface ImageDimensions {
+  width: number
+  height: number
 }
 
 const TestModel = () => {
@@ -36,6 +55,8 @@ const TestModel = () => {
   const [previewUrl, setPreviewUrl] = useState<string>('')
   const [resultImageUrl, setResultImageUrl] = useState<string>('')
   const [detections, setDetections] = useState<Detection[]>([])
+  const [imageDimensions, setImageDimensions] = useState<ImageDimensions | null>(null)
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.25)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingModels, setIsLoadingModels] = useState(false)
   const [error, setError] = useState('')
@@ -104,29 +125,24 @@ const TestModel = () => {
     setDetections([])
     setResultImageUrl('')
 
-    // First upload the image
+    // Create form data for the file upload and detection
     const formData = new FormData()
     formData.append('file', selectedFile)
+    formData.append('model_id', selectedModel)
+    formData.append('confidence', confidenceThreshold.toString())
 
     try {
-      // Upload image
-      const uploadResponse = await axios.post('/api/upload-image', formData, {
+      // Upload image and run detection in a single request
+      const detectResponse = await axios.post('/api/detect', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       })
 
-      const uploadedFilename = uploadResponse.data.filename
-
-      // Run detection
-      const detectResponse = await axios.post('/api/detect', {
-        image: uploadedFilename,
-        model: selectedModel,
-      })
-
       // Set results
       setDetections(detectResponse.data.detections || [])
-      setResultImageUrl(`/api/uploads/${detectResponse.data.result_image}`)
+      setResultImageUrl(detectResponse.data.image_path)
+      setImageDimensions(detectResponse.data.image_dimensions)
 
       toast({
         title: 'Detection successful',
@@ -178,7 +194,7 @@ const TestModel = () => {
                 isDisabled={isLoadingModels || models.length === 0}
               >
                 {models.map((model) => (
-                  <option key={model.name} value={model.name}>
+                  <option key={model.id} value={model.id}>
                     {model.name} ({(model.size / (1024 * 1024)).toFixed(2)} MB)
                   </option>
                 ))}
@@ -216,6 +232,22 @@ const TestModel = () => {
                 </Box>
               )}
             </Box>
+
+            <Box>
+              <Text mb={2} fontWeight="medium">3. Confidence threshold: {(confidenceThreshold * 100).toFixed(0)}%</Text>
+              <Slider
+                min={0.05}
+                max={0.95}
+                step={0.05}
+                value={confidenceThreshold}
+                onChange={(val) => setConfidenceThreshold(val)}
+              >
+                <SliderTrack>
+                  <SliderFilledTrack />
+                </SliderTrack>
+                <SliderThumb />
+              </Slider>
+            </Box>
             
             <Button 
               colorScheme="blue" 
@@ -238,8 +270,22 @@ const TestModel = () => {
               <VStack align="stretch" spacing={4}>
                 <Heading size="md">Detection Results</Heading>
                 
-                <Box>
+                <Box position="relative">
                   <Image src={resultImageUrl} alt="Detection Result" borderRadius="md" />
+                  
+                  {imageDimensions && detections.map((detection, index) => (
+                    <DetectionBox
+                      key={index}
+                      x1={detection.box.x1}
+                      y1={detection.box.y1}
+                      width={detection.box.width}
+                      height={detection.box.height}
+                      label={detection.class_name}
+                      confidence={detection.confidence}
+                      imageWidth={imageDimensions.width}
+                      imageHeight={imageDimensions.height}
+                    />
+                  ))}
                 </Box>
                 
                 <Box>

@@ -22,7 +22,7 @@ import {
   CardBody,
   useToast
 } from '@chakra-ui/react';
-import { DownloadIcon, ViewIcon, WarningIcon } from '@chakra-ui/icons';
+import { DownloadIcon, ViewIcon, WarningIcon, DeleteIcon } from '@chakra-ui/icons';
 import axios from 'axios';
 
 const ModelsList = ({ onSelectModel }) => {
@@ -30,6 +30,7 @@ const ModelsList = ({ onSelectModel }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [stoppingModels, setStoppingModels] = useState([]);
+  const [deletingModels, setDeletingModels] = useState([]);
   const toast = useToast();
 
   const fetchModels = async () => {
@@ -112,6 +113,43 @@ const ModelsList = ({ onSelectModel }) => {
       });
     } finally {
       setStoppingModels(prev => prev.filter(id => id !== modelId));
+    }
+  };
+
+  const handleDeleteModel = async (modelId) => {
+    if (deletingModels.includes(modelId)) return;
+    
+    if (!window.confirm('Are you sure you want to delete this model? This action cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      setDeletingModels(prev => [...prev, modelId]);
+      
+      const response = await axios.delete(`http://localhost:5000/api/models/${modelId}/delete`);
+      
+      toast({
+        title: 'Model deleted',
+        description: response.data.message || 'The model has been successfully deleted',
+        status: 'success',
+        duration: 5000,
+        isClosable: true,
+      });
+      
+      // Refresh the list
+      fetchModels();
+      
+    } catch (error) {
+      console.error('Error deleting model:', error);
+      toast({
+        title: 'Failed to delete model',
+        description: error.response?.data?.error || error.message,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setDeletingModels(prev => prev.filter(id => id !== modelId));
     }
   };
 
@@ -243,6 +281,18 @@ const ModelsList = ({ onSelectModel }) => {
                         >
                           Select
                         </Button>
+                        {model.status !== 'training' && model.status !== 'starting' && (
+                          <Button 
+                            size="xs" 
+                            leftIcon={<DeleteIcon />}
+                            colorScheme="red"
+                            isLoading={deletingModels.includes(model.id)}
+                            loadingText="Deleting"
+                            onClick={() => handleDeleteModel(model.id)}
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </HStack>
                     </Td>
                   </Tr>

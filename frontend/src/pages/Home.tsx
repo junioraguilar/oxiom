@@ -1,4 +1,4 @@
-import { Box, Heading, Text, Button, SimpleGrid, Icon, VStack, useColorModeValue } from '@chakra-ui/react'
+import { Box, Heading, Text, Button, SimpleGrid, Icon, VStack, useColorModeValue, Spacer, Flex } from '@chakra-ui/react'
 import { Link as RouterLink } from 'react-router-dom'
 import { FaRobot, FaUpload, FaFlask, FaList } from 'react-icons/fa'
 import { IconType } from 'react-icons'
@@ -24,15 +24,21 @@ const FeatureCard = ({ title, icon, description, linkTo }: FeatureCardProps) => 
       boxShadow="sm"
       transition="all 0.3s"
       _hover={{ transform: 'translateY(-5px)', boxShadow: 'md' }}
+      display="flex"
+      flexDirection="column"
+      height="100%"
     >
-      <VStack spacing={4} align="flex-start">
+      <VStack spacing={4} align="flex-start" flex="1">
         <Icon as={icon} boxSize={10} color="brand.500" />
         <Heading size="md">{title}</Heading>
         <Text color="gray.500">{description}</Text>
+        <Spacer />
+      </VStack>
+      <Flex justifyContent="center" width="100%" mt={4}>
         <Button as={RouterLink} to={linkTo} colorScheme="blue" variant="outline">
           Get Started
         </Button>
-      </VStack>
+      </Flex>
     </Box>
   )
 }

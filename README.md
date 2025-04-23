@@ -1,105 +1,117 @@
 # YOLOv8 Trainer Web Interface
 
-This project provides a web interface for training, uploading, and testing YOLOv8 models.
+Este projeto fornece uma interface web para treinamento, upload e teste de modelos YOLOv8.
 
 ## Features
 
-- Upload and train custom YOLOv8 models
-- Upload pre-trained YOLOv8 models
-- Test object detection by uploading images
-- View detection results with bounding boxes and confidence scores
+- Upload e treinamento de modelos YOLOv8 customizados
+- Upload de modelos YOLOv8 pré-treinados
+- Teste de detecção de objetos através do upload de imagens
+- Visualização de resultados de detecção com caixas delimitadoras e pontuações de confiança
 
-## Project Structure
+## Estrutura do Projeto
 
 ```
-├── backend/            # Flask backend API
-│   ├── app.py          # Main Flask application  
-│   └── requirements.txt # Python dependencies
-├── frontend/           # React frontend
-│   ├── public/         # Static assets
-│   └── src/            # React source code
-├── models/             # Stored models
-├── uploads/            # Uploaded images
-└── train_data/         # Training datasets
+├── backend/            # API Flask backend
+│   ├── app.py          # Aplicação Flask principal  
+│   └── requirements.txt # Dependências Python
+├── frontend/           # Frontend React
+│   ├── public/         # Assets estáticos
+│   └── src/            # Código fonte React
+├── models/             # Modelos armazenados (ignorados pelo Git)
+├── uploads/            # Imagens enviadas (ignoradas pelo Git)
+└── train_data/         # Datasets de treinamento (ignorados pelo Git)
 ```
 
-## Setup Instructions
+## Controle de Versão
 
-### Prerequisites
+Este projeto utiliza Git para controle de versão, com as seguintes configurações:
+
+- Arquivos ignorados pelo Git (configurados no `.gitignore`):
+  - Diretório `models/` (contém arquivos de modelo pesados)
+  - Diretório `train_data/` (contém datasets de treinamento)
+  - Diretório `uploads/` (contém imagens enviadas pelos usuários)
+  - Arquivos com extensão `.pt` (arquivos de modelo PyTorch)
+  - Diretório `node_modules/` (dependências do Node.js)
+  - Arquivos temporários e de cache
+
+## Instruções de Configuração
+
+### Pré-requisitos
 
 - Python 3.8+ 
 - Node.js 16+ 
-- npm or yarn
+- npm ou yarn
 
-### Backend Setup (Flask)
+### Configuração do Backend (Flask)
 
-1. Open a terminal and navigate to the backend directory:
+1. Abra um terminal e navegue até o diretório backend:
 
 ```
 cd backend
 ```
 
-2. Create a virtual environment (recommended):
+2. Crie um ambiente virtual (recomendado):
 
 ```
 python -m venv venv
 venv\Scripts\activate  # Windows
 ```
 
-3. Install the required dependencies:
+3. Instale as dependências necessárias:
 
 ```
 pip install -r requirements.txt
 ```
 
-4. Start the Flask server:
+4. Inicie o servidor Flask:
 
 ```
 python app.py
 ```
 
-The backend server will start on http://localhost:5000
+O servidor backend será iniciado em http://localhost:5000
 
-### Frontend Setup (React)
+### Configuração do Frontend (React)
 
-1. Open a new terminal and navigate to the frontend directory:
+1. Abra um novo terminal e navegue até o diretório frontend:
 
 ```
 cd frontend
 ```
 
-2. Install dependencies:
+2. Instale as dependências:
 
 ```
 npm install
 ```
 
-3. Start the development server:
+3. Inicie o servidor de desenvolvimento:
 
 ```
 npm run dev
 ```
 
-The frontend development server will start on http://localhost:3000
+O servidor de desenvolvimento frontend será iniciado em http://localhost:3000
 
-## Usage
+## Uso
 
-1. Open your browser and go to http://localhost:3000
-2. Use the navigation menu to access different features:
-   - **Train Model**: Upload a dataset and train a custom YOLOv8 model
-   - **Test Model**: Select a model and upload images for object detection
-   - **Upload Model**: Upload pre-trained YOLOv8 model files (.pt)
+1. Abra seu navegador e acesse http://localhost:3000
+2. Use o menu de navegação para acessar diferentes recursos:
+   - **Treinar Modelo**: Faça upload de um dataset e treine um modelo YOLOv8 personalizado
+   - **Testar Modelo**: Selecione um modelo e faça upload de imagens para detecção de objetos
+   - **Upload de Modelo**: Faça upload de arquivos de modelo YOLOv8 pré-treinados (.pt)
 
-## Training Data Format
+## Formato dos Dados de Treinamento
 
-The training data should be in YOLO format, typically a ZIP file containing:
+Os dados de treinamento devem estar no formato YOLO, tipicamente um arquivo ZIP contendo:
 
-- `images/` directory with training images
-- `labels/` directory with corresponding label files
-- `data.yaml` configuration file defining classes
+- Diretório `images/` com imagens de treinamento
+- Diretório `labels/` com arquivos de rótulos correspondentes
+- Arquivo de configuração `data.yaml` definindo as classes
 
-## Notes
+## Notas
 
-- The actual model training is resource-intensive and may require a GPU.
-- For production use, consider implementing background job processing for training tasks.
-- Large model files may require adjusting the server's file size limits. 
+- O treinamento real de modelos é intensivo em recursos e pode exigir uma GPU.
+- Para uso em produção, considere implementar processamento de tarefas em segundo plano para tarefas de treinamento.
+- Arquivos de modelo grandes podem exigir ajustes nos limites de tamanho de arquivo do servidor. 

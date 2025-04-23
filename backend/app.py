@@ -12,6 +12,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
+from models import db, YoloModel
 
 app = Flask(__name__)
 CORS(app)
@@ -22,6 +23,7 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '
 MODELS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models')
 TRAIN_DATA_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'train_data')
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'mp4', 'avi', 'mov', 'zip'}
+DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_db.sqlite')
 
 # Create necessary directories if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -32,6 +34,15 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODELS_FOLDER'] = MODELS_FOLDER
 app.config['TRAIN_DATA_FOLDER'] = TRAIN_DATA_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # Aumentando para 1GB max
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATABASE_PATH}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database
+db.init_app(app)
+
+# Create tables if they don't exist
+with app.app_context():
+    db.create_all()
 
 # Dicionário para armazenar o status dos treinamentos
 training_status = {}
@@ -151,6 +162,32 @@ def update_training_info(model_id, info):
     metrics_debug = 'No metrics' if not info.get('metrics') else f"Metrics: {info['metrics']}"
     print(f"Emitting training update for model {model_id}: {info['status']} - Epoch {info['current_epoch']}/{info['total_epochs']} - Progress {info['progress']*100:.1f}%")
     print(f"  {metrics_debug}")
+    
+    # Atualizar o banco de dados
+    with app.app_context():
+        model = YoloModel.query.get(model_id)
+        if model:
+            model.status = info['status']
+            model.current_epoch = info['current_epoch']
+            model.total_epochs = info['total_epochs']
+            model.progress = info['progress']
+            if 'metrics' in info:
+                model.metrics = info['metrics']
+            if 'error_message' in info:
+                model.error_message = info['error_message']
+            
+            # Verificar se o arquivo de modelo existe e atualizar o tamanho
+            model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
+            best_model_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
+            
+            if os.path.exists(model_path):
+                model.file_size = os.path.getsize(model_path)
+            elif os.path.exists(best_model_path):
+                model.file_size = os.path.getsize(best_model_path)
+                
+            db.session.commit()
+        else:
+            print(f"Warning: Model {model_id} not found in database - unable to update")
     
     socketio.emit('training_update', {
         'model_id': model_id,
@@ -376,23 +413,45 @@ def upload_model():
         return jsonify({'error': 'No file part'}), 400
     
     file = request.files['file']
+    model_name = request.form.get('name', 'Uploaded model')
     
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     
-    if file:
-        filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4()}_{filename}"
-        file_path = os.path.join(app.config['MODELS_FOLDER'], unique_filename)
+    if file and allowed_file(file.filename):
+        # Gerar ID único para o modelo
+        model_id = str(uuid.uuid4())
+        filename = f"{model_id}_" + secure_filename(file.filename)
+        file_path = os.path.join(app.config['MODELS_FOLDER'], filename)
+        
+        # Salvar o arquivo
         file.save(file_path)
+        
+        # Obter o tamanho do arquivo
+        file_size = os.path.getsize(file_path)
+        
+        # Criar registro no banco de dados
+        with app.app_context():
+            upload_model = YoloModel(
+                id=model_id,
+                name=model_name,
+                file_path=filename,
+                status='completed',
+                progress=1.0,
+                file_size=file_size,
+                total_epochs=0,
+                current_epoch=0
+            )
+            db.session.add(upload_model)
+            db.session.commit()
         
         return jsonify({
             'message': 'Model uploaded successfully',
-            'filename': unique_filename,
-            'path': file_path
-        }), 200
+            'model_id': model_id,
+            'filename': filename
+        }), 201
     
-    return jsonify({'error': 'Error uploading model'}), 400
+    return jsonify({'error': 'File type not allowed'}), 400
 
 @app.route('/api/upload-dataset', methods=['POST'])
 def upload_dataset():
@@ -486,92 +545,210 @@ names: ['object']  # class names
 
 @app.route('/api/models', methods=['GET'])
 def list_models():
-    models = []
-    for filename in os.listdir(app.config['MODELS_FOLDER']):
-        if filename.endswith('.pt'):
-            model_path = os.path.join(app.config['MODELS_FOLDER'], filename)
-            models.append({
-                'name': filename,
-                'path': model_path,
-                'size': os.path.getsize(model_path)
-            })
-    
-    return jsonify({'models': models}), 200
+    """Lista todos os modelos disponíveis a partir do banco de dados"""
+    try:
+        with app.app_context():
+            db_models = YoloModel.query.filter(
+                YoloModel.status.in_(['completed', 'stopped'])
+            ).order_by(YoloModel.created_at.desc()).all()
+            
+            models = []
+            for model in db_models:
+                # Verificar se o arquivo do modelo existe
+                model_path = None
+                model_exists = False
+                
+                # Verificar caminhos possíveis
+                if model.file_path:
+                    full_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
+                    if os.path.exists(full_path):
+                        model_path = full_path
+                        model_exists = True
+                
+                if not model_exists:
+                    # Verificar com nome direto do ID
+                    direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model.id}.pt")
+                    if os.path.exists(direct_path):
+                        model_path = direct_path
+                        model_exists = True
+                
+                if not model_exists:
+                    # Verificar no diretório de treinamento
+                    best_path = os.path.join(app.config['MODELS_FOLDER'], model.id, "weights", "best.pt")
+                    if os.path.exists(best_path):
+                        model_path = best_path
+                        model_exists = True
+                
+                if model_exists:
+                    models.append({
+                        'id': model.id,
+                        'name': model.name or f"Model {model.id[:8]}",
+                        'path': model_path,
+                        'size': model.file_size or os.path.getsize(model_path),
+                        'created_at': model.created_at.isoformat() if model.created_at else None,
+                        'classes': model.classes
+                    })
+            
+            return jsonify({'models': models}), 200
+            
+    except Exception as e:
+        print(f"Error listing models: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/training-status', methods=['GET'])
 def get_training_status():
-    """Endpoint para obter o status de todos os treinamentos"""
-    model_id = request.args.get('model_id')
-    
-    if model_id:
-        # Retornar apenas o status de um modelo específico
-        if model_id in training_status:
-            return jsonify({
-                'model_id': model_id, 
-                'info': training_status[model_id]
-            }), 200
+    """Retorna o status de todos os treinamentos em andamento"""
+    try:
+        # Verificar se foi solicitado um modelo específico
+        model_id = request.args.get('model_id')
+        
+        if model_id:
+            # Consultar o banco de dados para o modelo específico
+            with app.app_context():
+                model = YoloModel.query.get(model_id)
+                if not model:
+                    return jsonify({'error': 'Model not found'}), 404
+                
+                # Verificar também se existe no dicionário de status para dados mais recentes
+                current_info = training_status.get(model_id)
+                if current_info:
+                    # Mesclar as informações do dicionário com o banco de dados
+                    response = {
+                        'model_id': model_id,
+                        'status': current_info.get('status', model.status),
+                        'progress': current_info.get('progress', model.progress) * 100,
+                        'current_epoch': current_info.get('current_epoch', model.current_epoch),
+                        'total_epochs': current_info.get('total_epochs', model.total_epochs),
+                        'metrics': current_info.get('metrics', model.metrics),
+                        'error_message': current_info.get('error_message', model.error_message)
+                    }
+                else:
+                    # Usar apenas os dados do banco
+                    response = model.to_dict()
+                
+                return jsonify(response), 200
         else:
-            return jsonify({'error': 'Model ID not found'}), 404
+            # Consultar o banco de dados para todos os modelos em treinamento
+            with app.app_context():
+                training_models = YoloModel.query.filter(
+                    YoloModel.status.in_(['training', 'starting'])
+                ).all()
+                
+                result = {}
+                for model in training_models:
+                    # Verificar também se existe no dicionário de status
+                    current_info = training_status.get(model.id)
+                    if current_info:
+                        # Mesclar as informações
+                        result[model.id] = {
+                            'status': current_info.get('status', model.status),
+                            'progress': current_info.get('progress', model.progress) * 100,
+                            'current_epoch': current_info.get('current_epoch', model.current_epoch),
+                            'total_epochs': current_info.get('total_epochs', model.total_epochs),
+                            'metrics': current_info.get('metrics', model.metrics),
+                            'error_message': current_info.get('error_message', model.error_message)
+                        }
+                    else:
+                        # Usar apenas os dados do banco
+                        result[model.id] = model.to_dict()
+                
+                return jsonify(result), 200
     
-    # Retornar todos os status
-    return jsonify({
-        'training_sessions': [
-            {'model_id': model_id, 'info': info} 
-            for model_id, info in training_status.items()
-        ]
-    }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/detect', methods=['POST'])
 def detect_objects():
-    data = request.json
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
     
-    if not data or 'image' not in data or 'model' not in data:
-        return jsonify({'error': 'Missing required parameters'}), 400
-    
-    image_path = os.path.join(app.config['UPLOAD_FOLDER'], data['image'])
-    model_path = os.path.join(app.config['MODELS_FOLDER'], data['model'])
-    
-    if not os.path.exists(image_path):
-        return jsonify({'error': 'Image not found'}), 404
-    
-    if not os.path.exists(model_path):
-        return jsonify({'error': 'Model not found'}), 404
+    model_id = request.form.get('model_id')
+    if not model_id:
+        return jsonify({'error': 'No model specified'}), 400
     
     try:
-        # Load the YOLO model
-        model = YOLO(model_path)
+        # Buscar o modelo no banco de dados
+        with app.app_context():
+            model_record = YoloModel.query.get(model_id)
+            if not model_record:
+                return jsonify({'error': f'Model with ID {model_id} not found in database'}), 404
         
-        # Run inference
-        results = model(image_path)
+        # Verificar possíveis localizações do arquivo do modelo
+        model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
+        if not os.path.exists(model_path):
+            # Verificar se é um modelo carregado com nome personalizado
+            if model_record.file_path and model_record.file_path != f"{model_id}.pt":
+                alt_model_path = os.path.join(app.config['MODELS_FOLDER'], model_record.file_path)
+                if os.path.exists(alt_model_path):
+                    model_path = alt_model_path
+                else:
+                    # Verificar em diretórios de treinamento
+                    best_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
+                    if os.path.exists(best_path):
+                        model_path = best_path
+                    else:
+                        return jsonify({'error': 'Model file not found on disk'}), 404
         
-        # Process results
-        detections = []
-        for result in results:
+        file = request.files['file']
+        confidence = float(request.form.get('confidence', 0.25))
+        
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+        
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            
+            # Detect objects
+            model = YOLO(model_path)
+            results = model(file_path, conf=confidence)
+            result = results[0]  # Just take the first result
+            
+            # Process results
+            detections = []
             for box in result.boxes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                confidence = float(box.conf[0])
-                class_id = int(box.cls[0])
-                class_name = result.names[class_id]
+                class_id = int(box.cls[0].item())
+                confidence = float(box.conf[0].item())
+                
+                # Get coordinates
+                x1, y1, x2, y2 = [float(coord) for coord in box.xyxy[0].tolist()]
+                
+                # Map class ID to label
+                classes = model_record.classes if model_record.classes else []
+                class_name = classes[class_id] if class_id < len(classes) else f"Class {class_id}"
                 
                 detections.append({
-                    'bbox': [x1, y1, x2, y2],
-                    'confidence': confidence,
                     'class_id': class_id,
-                    'class_name': class_name
+                    'class_name': class_name,
+                    'confidence': confidence,
+                    'box': {
+                        'x1': x1,
+                        'y1': y1,
+                        'x2': x2,
+                        'y2': y2,
+                        'width': x2 - x1,
+                        'height': y2 - y1
+                    }
                 })
+            
+            # Load image for dimensions
+            img = Image.open(file_path)
+            width, height = img.size
+            
+            return jsonify({
+                'detections': detections,
+                'image_path': f"/api/uploads/{filename}",
+                'image_dimensions': {
+                    'width': width,
+                    'height': height
+                }
+            }), 200
         
-        # Save the output image with detections
-        output_path = os.path.join(app.config['UPLOAD_FOLDER'], f"result_{data['image']}")
-        result_img = results[0].plot()
-        Image.fromarray(result_img).save(output_path)
-        
-        return jsonify({
-            'message': 'Detection completed',
-            'detections': detections,
-            'result_image': f"result_{data['image']}"
-        }), 200
+        return jsonify({'error': 'File type not allowed'}), 400
         
     except Exception as e:
+        print(f"Detection error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/train', methods=['POST'])
@@ -591,6 +768,7 @@ def train_model():
         epochs = data.get('epochs', 50)
         batch_size = data.get('batch_size', 16)
         img_size = data.get('img_size', 640)
+        model_name = data.get('name', 'Unnamed model')
         
         # Verificar se o data.yaml existe
         data_yaml_path = os.path.join(dataset_path, 'data.yaml')
@@ -621,6 +799,38 @@ def train_model():
         # Start training process
         model_id = str(uuid.uuid4())
         model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
+        
+        # Ler as classes do arquivo YAML para armazenar no banco de dados
+        classes = []
+        try:
+            import yaml
+            with open(data_yaml_path, 'r') as yaml_file:
+                yaml_data = yaml.safe_load(yaml_file)
+                classes = yaml_data.get('names', [])
+        except Exception as e:
+            print(f"Failed to read classes from YAML: {str(e)}")
+        
+        # Criar registro no banco de dados
+        with app.app_context():
+            training_model = YoloModel(
+                id=model_id,
+                name=model_name,
+                file_path=f"{model_id}.pt",
+                dataset_id=data['dataset_id'],
+                status='starting',
+                total_epochs=epochs,
+                current_epoch=0,
+                progress=0.0,
+                parameters={
+                    'epochs': epochs,
+                    'batch_size': batch_size,
+                    'img_size': img_size,
+                    'device': device
+                },
+                classes=classes
+            )
+            db.session.add(training_model)
+            db.session.commit()
         
         # Iniciar treinamento em uma thread separada
         training_thread = threading.Thread(
@@ -660,39 +870,35 @@ def list_trained_models():
     trained_models = []
     
     try:
-        for model_id, info in training_status.items():
-            # Check if model file exists
-            model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
-            best_model_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
+        # Buscar modelos no banco de dados
+        with app.app_context():
+            models = YoloModel.query.order_by(YoloModel.created_at.desc()).all()
             
-            model_file_exists = os.path.exists(model_path)
-            best_model_exists = os.path.exists(best_model_path)
-            
-            # If model not found in root, check results folder
-            model_exists = model_file_exists or best_model_exists
-            model_file_path = model_path if model_file_exists else best_model_path if best_model_exists else None
-            
-            # Get file size if available
-            file_size = 0
-            if model_file_path and os.path.exists(model_file_path):
-                file_size = os.path.getsize(model_file_path)
-            
-            # Get metrics if available
-            metrics = info.get('metrics', {})
-            
-            model_data = {
-                'id': model_id,
-                'status': info.get('status', 'unknown'),
-                'progress': info.get('progress', 0) * 100,  # Convert to percentage
-                'epochs': info.get('total_epochs', 0),
-                'completed_epochs': info.get('current_epoch', 0),
-                'model_exists': model_exists,
-                'file_size': file_size,
-                'metrics': metrics,
-                'error_message': info.get('error_message')
-            }
-            
-            trained_models.append(model_data)
+            for model in models:
+                # Verificar se o arquivo do modelo existe no sistema de arquivos
+                model_path = os.path.join(app.config['MODELS_FOLDER'], f"{model.id}.pt")
+                best_model_path = os.path.join(app.config['MODELS_FOLDER'], model.id, "weights", "best.pt")
+                
+                model_file_exists = os.path.exists(model_path)
+                best_model_exists = os.path.exists(best_model_path)
+                model_exists = model_file_exists or best_model_exists
+                
+                # Atualizar o tamanho do arquivo se existir
+                if model_file_exists:
+                    file_size = os.path.getsize(model_path)
+                    if model.file_size != file_size:
+                        model.file_size = file_size
+                        db.session.commit()
+                elif best_model_exists:
+                    file_size = os.path.getsize(best_model_path)
+                    if model.file_size != file_size:
+                        model.file_size = file_size
+                        db.session.commit()
+                
+                # Converter o modelo para dicionário e adicionar à lista
+                model_dict = model.to_dict()
+                model_dict['model_exists'] = model_exists
+                trained_models.append(model_dict)
         
         return jsonify({'trained_models': trained_models}), 200
     except Exception as e:
@@ -703,7 +909,13 @@ def list_trained_models():
 def download_model(model_id):
     """Download a specific trained model"""
     try:
-        # First check in root models folder
+        # Verificar se o modelo existe no banco de dados
+        with app.app_context():
+            model = YoloModel.query.get(model_id)
+            if not model:
+                return jsonify({'error': 'Model not found in database'}), 404
+        
+        # Verificar no sistema de arquivos
         direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
         if os.path.exists(direct_path):
             return send_from_directory(
@@ -713,7 +925,19 @@ def download_model(model_id):
                 attachment_filename=f"yolo_model_{model_id}.pt"
             )
         
-        # Then check in the results subfolder
+        # Verificar se é um modelo que foi enviado com nome personalizado
+        if model.file_path and model.file_path != f"{model_id}.pt":
+            model_file_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
+            if os.path.exists(model_file_path):
+                filename = os.path.basename(model_file_path)
+                return send_from_directory(
+                    app.config['MODELS_FOLDER'],
+                    filename,
+                    as_attachment=True,
+                    attachment_filename=f"yolo_model_{model_id}_{filename.split('_', 1)[1] if '_' in filename else filename}"
+                )
+        
+        # Verificar na estrutura de diretórios de treinamento
         best_model_path = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights", "best.pt")
         if os.path.exists(best_model_path):
             weights_dir = os.path.join(app.config['MODELS_FOLDER'], model_id, "weights")
@@ -724,8 +948,8 @@ def download_model(model_id):
                 attachment_filename=f"yolo_model_{model_id}_best.pt"
             )
         
-        # If no model found
-        return jsonify({'error': 'Model file not found'}), 404
+        # Nenhum arquivo encontrado
+        return jsonify({'error': 'Model file not found in filesystem'}), 404
     except Exception as e:
         print(f"Error downloading model: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -740,17 +964,23 @@ def stop_training():
     
     model_id = data['model_id']
     
-    if model_id not in training_status:
-        return jsonify({'error': 'Training session not found'}), 404
+    # Verificar se o modelo existe no banco de dados
+    with app.app_context():
+        model = YoloModel.query.get(model_id)
+        if not model:
+            return jsonify({'error': 'Training session not found'}), 404
+        
+        # Verificar se o treinamento já está completo ou em erro
+        if model.status in ['completed', 'error', 'stopped']:
+            return jsonify({'message': f'Training already in {model.status} state'}), 200
+        
+        # Atualizar o status do modelo no banco de dados
+        model.status = 'stopped'
+        model.error_message = 'Training stopped by user'
+        db.session.commit()
     
-    # Verificar se o treinamento já está completo ou em erro
-    current_status = training_status[model_id].get('status')
-    
-    if current_status in ['completed', 'error', 'stopped']:
-        return jsonify({'message': f'Training already in {current_status} state'}), 200
-    
-    try:
-        # Atualizar o status para "stopped"
+    # Atualizar o status in-memory também, se existir
+    if model_id in training_status:
         update_training_info(model_id, {
             'status': 'stopped',
             'current_epoch': training_status[model_id].get('current_epoch', 0),
@@ -759,18 +989,62 @@ def stop_training():
             'metrics': training_status[model_id].get('metrics', {}),
             'error_message': 'Training stopped by user'
         })
-        
-        # Podemos tentar localizar o processo de treinamento para terminá-lo
-        # Isso seria ideal, mas requer acompanhamento do PID dos processos
-        # Por enquanto, apenas atualizamos o status
-        
-        return jsonify({
-            'message': 'Training stop signal sent. The training will stop at the end of the current epoch.',
-            'model_id': model_id,
-            'status': 'stopped'
-        }), 200
-        
+    
+    return jsonify({
+        'message': 'Training stop signal sent. The training will stop at the end of the current epoch.',
+        'model_id': model_id,
+        'status': 'stopped'
+    }), 200
+
+@app.route('/api/models/<model_id>/delete', methods=['DELETE'])
+def delete_model(model_id):
+    """Delete a trained model from database and file system"""
+    try:
+        # Verificar se o modelo existe no banco de dados
+        with app.app_context():
+            model = YoloModel.query.get(model_id)
+            if not model:
+                return jsonify({'error': 'Model not found in database'}), 404
+            
+            # Deletar os arquivos antes de remover do banco de dados
+            deleted_files = []
+
+            # Verificar se existe arquivo direto com ID do modelo
+            direct_path = os.path.join(app.config['MODELS_FOLDER'], f"{model_id}.pt")
+            if os.path.exists(direct_path):
+                os.remove(direct_path)
+                deleted_files.append(direct_path)
+            
+            # Verificar se existe arquivo com nome personalizado
+            if model.file_path and model.file_path != f"{model_id}.pt":
+                custom_path = os.path.join(app.config['MODELS_FOLDER'], model.file_path)
+                if os.path.exists(custom_path):
+                    os.remove(custom_path)
+                    deleted_files.append(custom_path)
+            
+            # Verificar se existe diretório de resultados
+            results_dir = os.path.join(app.config['MODELS_FOLDER'], model_id)
+            if os.path.exists(results_dir) and os.path.isdir(results_dir):
+                import shutil
+                shutil.rmtree(results_dir)
+                deleted_files.append(results_dir)
+            
+            # Remover do banco de dados
+            db.session.delete(model)
+            db.session.commit()
+            
+            # Remover do dicionário de status, se existir
+            if model_id in training_status:
+                del training_status[model_id]
+            
+            return jsonify({
+                'message': 'Model deleted successfully',
+                'model_id': model_id,
+                'deleted_files': deleted_files
+            }), 200
+            
     except Exception as e:
+        print(f"Error deleting model: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
