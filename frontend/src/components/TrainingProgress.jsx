@@ -40,6 +40,7 @@ const TrainingProgress = ({ modelId }) => {
   const [connectionError, setConnectionError] = useState(null);
   const [stoppingTraining, setStoppingTraining] = useState(false);
   const [metricsHistory, setMetricsHistory] = useState({});
+  const [eventLog, setEventLog] = useState([]);
   const toast = useToast();
 
   useEffect(() => {
@@ -69,23 +70,23 @@ const TrainingProgress = ({ modelId }) => {
     // Listen for training updates
     socket.on('training_update', (data) => {
       console.log('Received training update:', data);
-      
       if (data.model_id === modelId && data.info) {
+        // Log event if present
+        if (data.info.event) {
+          setEventLog(prev => [
+            { event: data.info.event, epoch: data.info.current_epoch, status: data.info.status, timestamp: new Date().toLocaleTimeString() },
+            ...prev.slice(0, 49)
+          ]);
+        }
         // Ensure progress is within the 0-1 range
         const info = {...data.info};
-        
-        // Make sure progress is a decimal between 0 and 1
         if (typeof info.progress === 'number') {
           if (info.progress > 1) {
-            // If progress is sent as a percentage (e.g. 4 instead of 0.04), convert it
             info.progress = info.progress / 100;
           }
-          
-          // Safety check to keep progress in valid range
           info.progress = Math.max(0, Math.min(1, info.progress));
           console.log(`Progress normalized: ${info.progress}`);
         }
-        
         console.log("Metrics received:", info.metrics);
         setTrainingInfo(info);
 
@@ -95,10 +96,8 @@ const TrainingProgress = ({ modelId }) => {
             const updated = { ...prev };
             Object.entries(info.metrics).forEach(([key, value]) => {
               if (!updated[key]) updated[key] = [];
-              // Evita duplicatas para a mesma epoch
               if (!updated[key].some(item => item.epoch === info.current_epoch)) {
                 updated[key] = [...updated[key], { epoch: info.current_epoch, value: value }];
-                // Mantém só os últimos 30 valores
                 if (updated[key].length > 30) updated[key] = updated[key].slice(-30);
               }
             });
@@ -267,6 +266,22 @@ const TrainingProgress = ({ modelId }) => {
 
           <Divider />
           
+          <Heading size="sm" mb={2}>Training Events</Heading>
+          <Box maxH="120px" overflowY="auto" bg="gray.50" borderRadius="md" borderWidth={1} borderColor="gray.200" p={2} fontSize="sm">
+            {eventLog.length === 0 ? (
+              <Text color="gray.500">No events yet.</Text>
+            ) : (
+              eventLog.map((evt, idx) => (
+                <Box key={idx} mb={1}>
+                  <Badge colorScheme="purple" mr={2}>{evt.event}</Badge>
+                  {evt.epoch !== undefined && <Text as="span" mr={2}>Epoch: {evt.epoch}</Text>}
+                  <Text as="span" color="gray.500">{evt.status}</Text>
+                  <Text as="span" float="right" color="gray.400">{evt.timestamp}</Text>
+                </Box>
+              ))
+            )}
+          </Box>
+
           <Heading size="sm" mb={2}>Training Metrics</Heading>
           {renderMetrics()}
         </VStack>
