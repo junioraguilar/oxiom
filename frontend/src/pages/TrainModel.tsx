@@ -55,6 +55,7 @@ const TrainModel = () => {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [loadingDatasets, setLoadingDatasets] = useState(false)
+  const [modelType, setModelType] = useState<string>('n')
   
   const toast = useToast()
 
@@ -256,7 +257,8 @@ const TrainModel = () => {
         dataset_id: datasetId,
         epochs: epochs,
         batch_size: batchSize,
-        img_size: imageSize
+        img_size: imageSize,
+        model_type: modelType
       })
 
       setTrainingSuccess(true)
@@ -416,6 +418,25 @@ const TrainModel = () => {
               </NumberInput>
               <FormHelperText>
                   Input image size (px)
+              </FormHelperText>
+            </FormControl>
+            
+            <FormControl>
+              <FormLabel>YOLO Model Type</FormLabel>
+              <Select
+                value={modelType}
+                onChange={e => setModelType(e.target.value)}
+                placeholder="Choose model type"
+                isDisabled={isTraining}
+              >
+                <option value="n">Nano (yolov8n.pt) - Fastest, lowest accuracy</option>
+                <option value="s">Small (yolov8s.pt) - Good speed, moderate accuracy</option>
+                <option value="m">Medium (yolov8m.pt) - Balance of speed and accuracy</option>
+                <option value="l">Large (yolov8l.pt) - Higher accuracy, slower</option>
+                <option value="x">XLarge (yolov8x.pt) - Best accuracy, slowest</option>
+              </Select>
+              <FormHelperText>
+                Select the base YOLO model for training
               </FormHelperText>
             </FormControl>
             </HStack>

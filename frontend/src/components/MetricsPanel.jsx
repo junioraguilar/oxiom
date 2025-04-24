@@ -37,7 +37,7 @@ const MetricsPanel = ({ metricsHistory = {}, currentMetrics = {} }) => {
 
   return (
     <Box mb={8}>
-      <Heading size="md" mb={4}>Métricas em Tempo Real</Heading>
+      <Heading size="md" mb={4}>Metrics in Real Time</Heading>
       <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
         {presentMetricKeys.map((key) => (
           <Stat key={key} p={4} shadow="sm" border="1px" borderColor="gray.200" borderRadius="md" bg="white">

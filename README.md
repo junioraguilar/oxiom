@@ -2,7 +2,7 @@
   <img src="frontend/logo.png" alt="Oxiom Logo" width="360" />
 </p>
 
-<p align="center"><b>Oxiom - Train, test, and upload models for object detection with an easy-to-use interface</b></p>
+<p align="center"><b>Train, test, and upload models for object detection with an easy-to-use interface</b></p>
 
 ---
 

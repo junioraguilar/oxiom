@@ -853,6 +853,23 @@ def train_model():
         img_size = data.get('img_size', 640)
         model_name = data.get('name', f"Model from {dataset.name}")
         
+        # Escolha do tipo de modelo base
+        model_type = data.get('model_type', 'n')  # 'n', 's', 'm', 'l', 'x'
+        model_type = str(model_type).lower()
+        model_types_map = {
+            'n': 'yolov8n.pt',
+            's': 'yolov8s.pt',
+            'm': 'yolov8m.pt',
+            'l': 'yolov8l.pt',
+            'x': 'yolov8x.pt',
+        }
+        if model_type not in model_types_map:
+            return jsonify({'error': f"Invalid model_type '{model_type}'. Choose one of: n, s, m, l, x."}), 400
+        model_pt = model_types_map[model_type]
+        print(f"Using YOLO model: {model_pt}")
+        # Inicializa o modelo escolhido
+        model = YOLO(model_pt)
+        
         # Use the yaml_path from the database or verify its existence
         data_yaml_path = os.path.join(dataset_path, 'data.yaml')
         if dataset.yaml_path:
@@ -876,9 +893,6 @@ def train_model():
                 return jsonify({'error': 'data.yaml not found in dataset'}), 400
         
         print(f"Using data YAML: {data_yaml_path}")
-        
-        # Initialize a new YOLO model - use YOLOv8n instead of YOLOv11
-        model = YOLO('yolov8n.pt')  # Start with pre-trained YOLOv8 nano model
         
         # Check if CUDA is available
         device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -914,7 +928,8 @@ def train_model():
                     'epochs': epochs,
                     'batch_size': batch_size,
                     'img_size': img_size,
-                    'device': device
+                    'device': device,
+                    'model_type': model_type
                 },
                 classes=classes
             )
