@@ -118,33 +118,24 @@ const UploadModel = () => {
         
         <Box p={6} borderWidth="1px" borderRadius="lg" boxShadow="sm">
           <VStack spacing={4} align="stretch">
-            <FormControl>
-              <FormLabel htmlFor="model-file">Select Model File (.pt)</FormLabel>
+            <FormControl isRequired mb={4}>
+              <FormLabel>Model Name</FormLabel>
               <Input
-                id="model-file"
-                type="file"
-                accept=".pt"
-                onChange={handleFileChange}
-                padding={1}
+                placeholder="Enter a name for your model"
+                value={modelName}
+                onChange={e => setModelName(e.target.value)}
+                isDisabled={isUploading}
               />
+            </FormControl>
+            <FormControl isRequired mb={4}>
+              <FormLabel>Model File (.pt)</FormLabel>
+              <Input type="file" accept=".pt" onChange={handleFileChange} isDisabled={isUploading} />
             </FormControl>
             
             {selectedFile && (
-              <>
-                <FormControl>
-                  <FormLabel htmlFor="model-name">Model Name</FormLabel>
-                  <Input
-                    id="model-name"
-                    type="text"
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    placeholder="Enter a name for your model"
-                  />
-                </FormControl>
-                <Text fontSize="sm">
-                  Selected file: <strong>{selectedFile.name}</strong> ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
-                </Text>
-              </>
+              <Text fontSize="sm">
+                Selected file: <strong>{selectedFile.name}</strong> ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
+              </Text>
             )}
             
             {isUploading && (
@@ -170,12 +161,11 @@ const UploadModel = () => {
               </Alert>
             )}
             
-            <Button 
-              colorScheme="blue" 
-              onClick={handleUpload} 
-              isLoading={isUploading} 
-              loadingText="Uploading" 
-              isDisabled={!selectedFile || isUploading}
+            <Button
+              colorScheme="blue"
+              onClick={handleUpload}
+              isLoading={isUploading}
+              isDisabled={!selectedFile || !modelName || isUploading}
             >
               Upload Model
             </Button>
