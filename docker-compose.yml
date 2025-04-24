@@ -2,6 +2,7 @@ version: '3.8'
 services:
   backend:
     build: .
+    shm_size: '4gb'
     container_name: yolo-backend
     ports:
       - "5000:5000"
