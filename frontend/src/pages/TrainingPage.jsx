@@ -15,9 +15,11 @@ import {
 } from '@chakra-ui/react';
 import TrainingProgress from '../components/TrainingProgress';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const TrainingPage = () => {
   const toast = useToast();
+  const navigate = useNavigate();
   const [datasetId, setDatasetId] = useState(null);
   const [datasets, setDatasets] = useState([]);
   const [currentModelId, setCurrentModelId] = useState(null);
@@ -120,10 +122,13 @@ const TrainingPage = () => {
           </Alert>
         ) : (
           <>
-            {trainingSessions.length === 0 && !loading && !error && (
+            {(!currentModelId && !loading && !error) && (
               <Box mt={8} textAlign="center">
-                <Heading size="md" color="gray.600" mb={2}>No training in progress</Heading>
-                <Text color="gray.500">Start a new training session to see progress here.</Text>
+                <Heading size="md" color="gray.600" mb={2}>Nenhum treinamento em andamento</Heading>
+                <Text color="gray.500" mb={4}>Inicie um novo treinamento para acompanhar o progresso aqui.</Text>
+                <Button colorScheme="blue" onClick={() => navigate('/train')}>
+                  Iniciar novo treinamento
+                </Button>
               </Box>
             )}
             {currentModelId && (
