@@ -46,7 +46,12 @@ def list_models():
                     'path': model_path,
                     'size': model.file_size or os.path.getsize(model_path),
                     'created_at': model.created_at.isoformat() if model.created_at else None,
-                    'classes': model.classes
+                    'classes': model.classes,
+                    'metrics': model.metrics if hasattr(model, 'metrics') else {},
+                    'status': model.status,
+                    'progress': model.progress * 100 if model.progress is not None else 100,
+                    'epochs': model.total_epochs or 0,
+                    'completed_epochs': model.current_epoch or model.total_epochs or 0
                 })
         return jsonify({'models': models}), 200
     except Exception as e:
@@ -144,7 +149,9 @@ def download_model(model_id):
 @models_bp.route('/api/delete-model/<model_id>', methods=['DELETE'])
 def delete_model(model_id):
     try:
-        model = YoloModel.query.get(model_id)
+        # Use a new session for deletion to avoid session conflicts
+        from extensions import db as db_ext
+        model = db_ext.session.get(YoloModel, model_id)
         if not model:
             return jsonify({'error': 'Model not found'}), 404
         # Remove files
@@ -155,8 +162,8 @@ def delete_model(model_id):
         if os.path.exists(best_model_path):
             import shutil
             shutil.rmtree(os.path.dirname(os.path.dirname(best_model_path)), ignore_errors=True)
-        db.session.delete(model)
-        db.session.commit()
+        db_ext.session.delete(model)
+        db_ext.session.commit()
         return jsonify({'message': 'Model deleted successfully'}), 200
     except Exception as e:
         print(f"Error deleting model: {str(e)}")

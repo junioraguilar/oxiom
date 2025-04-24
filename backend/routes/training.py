@@ -100,6 +100,7 @@ def train_model():
 
                 def emit_callback_event(event, trainer, extra=None):
                     last_trainer['obj'] = trainer
+                    print("Metrics received:", getattr(trainer, 'metrics', {}))
                     info = {
                         'event': event,
                         'status': 'training',

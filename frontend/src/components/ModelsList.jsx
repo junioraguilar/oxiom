@@ -126,7 +126,7 @@ const ModelsList = ({ onSelectModel }) => {
     try {
       setDeletingModels(prev => [...prev, modelId]);
       
-      const response = await axios.delete(`http://localhost:5000/api/models/${modelId}/delete`);
+      const response = await axios.delete(`http://localhost:5000/api/delete-model/${modelId}`);
       
       toast({
         title: 'Model deleted',
@@ -236,11 +236,17 @@ const ModelsList = ({ onSelectModel }) => {
                     <Td>
                       {model.metrics && Object.keys(model.metrics).length > 0 ? (
                         <VStack align="start" spacing={0}>
-                          {model.metrics.map50 && (
-                            <Text fontSize="xs">mAP@50: {model.metrics.map50.toFixed(3)}</Text>
+                          {typeof model.metrics["metrics/mAP50(B)"] !== 'undefined' && (
+                            <Text fontSize="xs">mAP@50: {Number(model.metrics["metrics/mAP50(B)"]).toFixed(3)}</Text>
                           )}
-                          {model.metrics.map && (
-                            <Text fontSize="xs">mAP@50-95: {model.metrics.map.toFixed(3)}</Text>
+                          {typeof model.metrics["metrics/mAP50-95(B)"] !== 'undefined' && (
+                            <Text fontSize="xs">mAP@50-95: {Number(model.metrics["metrics/mAP50-95(B)"]).toFixed(3)}</Text>
+                          )}
+                          {typeof model.metrics["metrics/precision(B)"] !== 'undefined' && (
+                            <Text fontSize="xs">Precision: {Number(model.metrics["metrics/precision(B)"]).toFixed(3)}</Text>
+                          )}
+                          {typeof model.metrics["metrics/recall(B)"] !== 'undefined' && (
+                            <Text fontSize="xs">Recall: {Number(model.metrics["metrics/recall(B)"]).toFixed(3)}</Text>
                           )}
                         </VStack>
                       ) : (
