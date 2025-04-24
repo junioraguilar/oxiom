@@ -56,6 +56,7 @@ const TrainModel = () => {
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [modelType, setModelType] = useState<string>('n')
+  const [modelName, setModelName] = useState('')
   
   const toast = useToast()
 
@@ -248,6 +249,16 @@ const TrainModel = () => {
       })
       return
     }
+    if (!modelName) {
+      toast({
+        title: 'Model name required',
+        description: 'Please enter a name for your model',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      })
+      return
+    }
 
     setIsTraining(true)
     setError('')
@@ -258,7 +269,8 @@ const TrainModel = () => {
         epochs: epochs,
         batch_size: batchSize,
         img_size: imageSize,
-        model_type: modelType
+        model_type: modelType,
+        name: modelName
       })
 
       setTrainingSuccess(true)
@@ -419,6 +431,16 @@ const TrainModel = () => {
               <FormHelperText>
                   Input image size (px)
               </FormHelperText>
+            </FormControl>
+            
+            <FormControl isRequired>
+              <FormLabel>Model Name</FormLabel>
+              <Input
+                placeholder="Enter a name for your model"
+                value={modelName}
+                onChange={e => setModelName(e.target.value)}
+                isDisabled={isTraining}
+              />
             </FormControl>
             
             <FormControl>

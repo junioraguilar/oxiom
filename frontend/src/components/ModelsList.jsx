@@ -213,6 +213,7 @@ const ModelsList = ({ onSelectModel }) => {
             <Table variant="simple" size="sm">
               <Thead>
                 <Tr>
+                  <Th width="140px" maxW="140px">Name</Th>
                   <Th>Model ID</Th>
                   <Th>Status</Th>
                   <Th>Progress</Th>
@@ -225,6 +226,9 @@ const ModelsList = ({ onSelectModel }) => {
               <Tbody>
                 {models.map((model) => (
                   <Tr key={model.id}>
+                    <Td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {model.name || <i>No name</i>}
+                    </Td>
                     <Td>{model.id.substring(0, 8)}...</Td>
                     <Td>
                       <Badge colorScheme={getStatusColor(model.status)}>
