@@ -254,11 +254,13 @@ const ModelsList = ({ onSelectModel }) => {
                       )}
                     </Td>
                     <Td>
-                      {model.model_exists ? formatFileSize(model.file_size) : 'Not available'}
+                      {typeof model.size !== 'undefined' && model.size !== null
+                        ? formatFileSize(model.size)
+                        : 'Not available'}
                     </Td>
                     <Td>
                       <HStack spacing={2}>
-                        {model.model_exists && (
+                        {model.size !== null && (
                           <Button 
                             size="xs" 
                             leftIcon={<DownloadIcon />} 

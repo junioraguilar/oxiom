@@ -113,7 +113,7 @@ def list_trained_models():
                     'id': model.id,
                     'name': model.name or f"Model {model.id[:8]}",
                     'path': file_path,
-                    'size': model.file_size or os.path.getsize(file_path),
+                    'size': os.path.getsize(file_path) if file_path and os.path.exists(file_path) else model.file_size,
                     'created_at': model.created_at.isoformat() if model.created_at else None,
                     'classes': model.classes,
                     'status': model.status or 'COMPLETED',
