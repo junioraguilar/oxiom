@@ -3,8 +3,8 @@ train_data/
 train_data/*
 
 # Ignorar diretório de modelos
-models/
-models/*
+models_saved/
+models_saved/*
 *.pt
 
 # Ignorar diretório de uploads
