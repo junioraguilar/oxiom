@@ -17,6 +17,7 @@ training_stop_flags = {}
 
 def update_training_info(model_id, info):
     training_status[model_id] = info
+    print(f"[TRAINING] Updated training info for model_id={model_id}: {info}")
     socketio.emit('training_update', {'model_id': model_id, 'info': info})
 
 @training_bp.route('/api/train', methods=['POST'])
@@ -94,8 +95,11 @@ def train_model():
                 model = YOLO(model_pt)
                 print(f"[TRAINING THREAD] YOLO model loaded: {model}")
 
-                # --- MULTIPLE CALLBACKS FOR TRAINING EVENTS ---
+                # Variável para armazenar o último trainer
+                last_trainer = {'obj': None}
+
                 def emit_callback_event(event, trainer, extra=None):
+                    last_trainer['obj'] = trainer
                     info = {
                         'event': event,
                         'status': 'training',
@@ -110,39 +114,46 @@ def train_model():
                     update_training_info(model_id, info)
 
                 def on_pretrain_routine_start(trainer):
-                    print(f"[TRAINING THREAD] Pretrain routine start for model_id={model_id}")
                     emit_callback_event('on_pretrain_routine_start', trainer)
                 def on_pretrain_routine_end(trainer):
-                    print(f"[TRAINING THREAD] Pretrain routine end for model_id={model_id}")
                     emit_callback_event('on_pretrain_routine_end', trainer)
                 def on_train_start(trainer):
-                    print(f"[TRAINING THREAD] Training start for model_id={model_id}")
                     emit_callback_event('on_train_start', trainer)
-                def on_train_epoch_start(trainer):
-                    print(f"[TRAINING THREAD] Training epoch start for model_id={model_id}")
-                    emit_callback_event('on_train_epoch_start', trainer)
+                # def on_train_epoch_start(trainer):
+                #     emit_callback_event('on_train_epoch_start', trainer)
                 def on_train_epoch_end(trainer):
-                    print(f"[TRAINING THREAD] Training epoch end for model_id={model_id}")
                     progress = (trainer.epoch + 1) / epochs
                     emit_callback_event('on_train_epoch_end', trainer, {
                         'progress': progress * 100,
                         'current_epoch': trainer.epoch + 1
                     })
-                def on_model_save(trainer):
-                    print(f"[TRAINING THREAD] Model saved for model_id={model_id}")
-                    emit_callback_event('on_model_save', trainer)
                 def on_train_end(trainer):
-                    print(f"[TRAINING THREAD] Training end for model_id={model_id}")
-                    emit_callback_event('on_train_end', trainer)
+                    emit_callback_event('on_train_end', trainer, {
+                        'status': 'completed',
+                        'total_epochs': epochs,
+                        'progress': 100,
+                        'current_epoch': trainer.epoch + 1
+                    })
+                    metrics = getattr(trainer, 'metrics', {})
+                    print("Metrics received:", metrics)
+                    from app import app
+                    with app.app_context():
+                        with db.session.begin():
+                            training_model = db.session.get(YoloModel, model_id)
+                            if training_model:
+                                training_model.status = 'completed'
+                                training_model.progress = 1.0
+                                training_model.current_epoch = trainer.epochs
+                                training_model.metrics = metrics
+                                db.session.add(training_model)
 
                 model.add_callback("on_pretrain_routine_start", on_pretrain_routine_start)
                 model.add_callback("on_pretrain_routine_end", on_pretrain_routine_end)
                 model.add_callback("on_train_start", on_train_start)
-                model.add_callback("on_train_epoch_start", on_train_epoch_start)
+                # model.add_callback("on_train_epoch_start", on_train_epoch_start)
                 model.add_callback("on_train_epoch_end", on_train_epoch_end)
-                model.add_callback("on_model_save", on_model_save)
+                # model.add_callback("on_model_save", on_model_save)
                 model.add_callback("on_train_end", on_train_end)
-                # --- END MULTIPLE CALLBACKS ---
 
                 results = model.train(
                     data=data_yaml_path,
@@ -155,31 +166,6 @@ def train_model():
                     exist_ok=True
                 )
                 print(f"[TRAINING THREAD] Training finished for model_id={model_id}")
-                # Importa o app dentro da função para evitar circularidade
-                from app import app
-                # Calcula métricas finais e file_size
-                final_metrics = getattr(results, 'metrics', {}) if hasattr(results, 'metrics') else {}
-                best_weights_path = os.path.join(Config.MODELS_FOLDER, model_id, "weights", "best.pt")
-                file_size = None
-                if os.path.exists(best_weights_path):
-                    file_size = os.path.getsize(best_weights_path)
-                elif os.path.exists(model_path):
-                    file_size = os.path.getsize(model_path)
-                with app.app_context():
-                    with db.session.begin():
-                        training_model = db.session.get(YoloModel, model_id)
-                        if training_model:
-                            training_model.status = 'completed'
-                            training_model.progress = 1.0
-                            training_model.current_epoch = training_model.total_epochs
-                            training_model.metrics = final_metrics
-                            print(f"[TRAINING THREAD] metrics={final_metrics}, file_size={file_size}")
-                            if file_size:
-                                training_model.file_size = file_size
-                            db.session.add(training_model)
-                update_training_info(model_id, {'status': 'completed', 'current_epoch': epochs, 'total_epochs': epochs, 'progress': 100, 'metrics': final_metrics, 'file_size': file_size})
-                print(f"[TRAINING THREAD] Training completed for model_id={model_id}")
-                print(model_id, {'status': 'completed', 'current_epoch': epochs, 'total_epochs': epochs, 'progress': 100, 'metrics': final_metrics, 'file_size': file_size})
             except Exception as e:
                 print(f"[TRAINING THREAD] Error for model_id={model_id}: {str(e)}")
                 update_training_info(model_id, {'status': 'error', 'current_epoch': 0, 'total_epochs': epochs, 'progress': 0, 'metrics': {}, 'error_message': str(e)})
