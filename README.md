@@ -6,12 +6,12 @@
 
 ---
 
-This project provides a web interface for training, uploading, and testing YOLOv8 models.
+Oxiom - This project provides a web interface for training, uploading, and testing YOLOv8 and YOLOv11 models.
 
 ## Features
 
-- Upload and train custom YOLOv8 models
-- Upload pre-trained YOLOv8 models
+- Upload and train custom YOLOv8 and YOLOv11 models
+- Upload pre-trained YOLOv8 YOLOv8 models
 - Object detection testing via image upload
 - Visualization of detection results with bounding boxes and confidence scores
 
