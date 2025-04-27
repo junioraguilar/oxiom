@@ -2,11 +2,11 @@
   <img src="frontend/logo.png" alt="Oxiom Logo" width="360" />
 </p>
 
-<p align="center"><b>Train, test, and upload models for object detection with an easy-to-use interface</b></p>
+<p align="center"><b>Oxiom - Train, test, and upload models for object detection with an easy-to-use interface</b></p>
 
 ---
 
-Oxiom - This project provides a web interface for training, uploading, and testing YOLOv8 and YOLOv11 models.
+This project provides a web interface for training, uploading, and testing YOLOv8 and YOLOv11 models.
 
 ## Features
 
